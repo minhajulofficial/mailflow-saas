@@ -1,0 +1,15 @@
+export const APP_URL = process.env.APP_URL || "http://localhost:3000";
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+export const ENCRYPTION_MASTER_KEY = process.env.ENCRYPTION_MASTER_KEY;
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+export const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY;
+export const INNGEST_SIGNING_KEY = process.env.INNGEST_SIGNING_KEY;
+export const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
+export const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+export const AI_API_KEY = process.env.AI_API_KEY;
+export const BREVO_WEBHOOK_SECRET = process.env.BREVO_WEBHOOK_SECRET;
+export const MAILJET_WEBHOOK_SECRET = process.env.MAILJET_WEBHOOK_SECRET;
+export const SENTRY_DSN = process.env.SENTRY_DSN;
