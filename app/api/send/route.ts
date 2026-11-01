@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
   await supabase
     .from("email_jobs")
-    .update({ status, error: err, attempts: supabase.ref("attempts") + 1 })
+    .update({ status, error: err, attempts: 1 })
     .eq("id", jobId);
 
   return NextResponse.json({ ok: true });
