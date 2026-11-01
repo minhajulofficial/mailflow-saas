@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // CSS variables for dark mode support
 import "./globals.css";
 

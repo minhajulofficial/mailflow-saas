@@ -5,7 +5,7 @@ interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: "default" | "secondary" | "destructive" | "outline";
 }
 
-const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(({ className, variant, ...props }, ref) => {
+const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(({ className, variant = "default", ...props }, ref) => {
   const variants = {
     default: "bg-primary text-primary-foreground",
     secondary: "bg-secondary text-secondary-foreground",

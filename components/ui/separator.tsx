@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-interface SeparatorProps extends React.HTMLAttributes<HTMLHRElement> {
+interface SeparatorProps extends Omit<React.HTMLAttributes<HTMLHRElement>, "title"> {
   title?: React.ReactNode;
   side?: "top" | "bottom";
 }

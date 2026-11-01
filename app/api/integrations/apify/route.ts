@@ -3,7 +3,7 @@ import { createServerClient } from "@/lib/supabase/server";
 import { decryptSecret } from "@/lib/encryption";
 
 export async function GET(request: Request) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

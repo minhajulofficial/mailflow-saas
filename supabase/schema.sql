@@ -127,6 +127,7 @@ create index idx_lead_lists_user_id on public.lead_lists(user_id);
 create table if not exists public.extraction_jobs (
   id uuid default gen_random_uuid() primary key,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  list_id uuid references public.lead_lists(id) on delete set null,
   params jsonb not null,
   actor text,
   apify_run_id text,
@@ -316,6 +317,7 @@ create index idx_email_events_job_type on public.email_events(email_job_id, type
 -- ============================================
 create table if not exists public.replies (
   id uuid default gen_random_uuid() primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
   email_job_id uuid references public.email_jobs(id) on delete set null,
   lead_id uuid not null references public.leads(id) on delete cascade,
   from_email text not null,
@@ -324,6 +326,17 @@ create table if not exists public.replies (
   received_at timestamptz default now(),
   label text
 );
+
+-- Add and populate owner information for databases created with the prior schema.
+alter table public.replies
+  add column if not exists user_id uuid references public.profiles(id) on delete cascade;
+
+update public.replies r
+set user_id = l.user_id
+from public.leads l
+where l.id = r.lead_id and r.user_id is null;
+
+alter table public.replies alter column user_id set not null;
 
 alter table public.replies enable row level security;
 

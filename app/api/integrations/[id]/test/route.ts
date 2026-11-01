@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { decryptSecret } from "@/lib/encryption";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

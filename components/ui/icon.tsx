@@ -1,8 +1,7 @@
-import { LucideProps } from "lucide-react";
-import React from "react";
+import { Circle, type LucideProps } from "lucide-react";
 
 export function Icon(props: LucideProps) {
-  return <span {...props} />;
+  return <Circle {...props} />;
 }
 
 export default Icon;

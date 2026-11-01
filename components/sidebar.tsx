@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { name: "Dashboard", href: "/app", icon: "LayoutDashboard" },

@@ -1,9 +1,24 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { NextResponse } from "next/server";
+import { isAuthorizedWorker } from "@/lib/worker-auth";
+import { z } from "zod";
 
-export async function GET() {
+const createJobSchema = z.object({
+  leadId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  stepId: z.string().uuid().nullable().optional(),
+  senderId: z.string().uuid(),
+  messageId: z.string().min(1).max(255),
+  scheduledAt: z.string().datetime(),
+});
+
+export async function GET(request: Request) {
+  if (!isAuthorizedWorker(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const supabase = createServiceClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("email_jobs")
     .select("*, leads(*), campaigns(name)")
     .eq("status", "scheduled")
@@ -11,18 +26,44 @@ export async function GET() {
     .limit(100)
     .order("scheduled_at", { ascending: true });
 
+  if (error) return NextResponse.json({ error: "Unable to load due email jobs" }, { status: 500 });
   return NextResponse.json(data || []);
 }
 
 export async function POST(request: Request) {
+  if (!isAuthorizedWorker(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = createJobSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const job = parsed.data;
   const supabase = createServiceClient();
-  const body = await request.json();
-  const { jobId, status, error: err } = body;
-
-  await supabase
+  const { data, error } = await supabase
     .from("email_jobs")
-    .update({ status, error: err, attempts: 1 })
-    .eq("id", jobId);
+    .insert({
+      campaign_id: job.campaignId,
+      step_id: job.stepId ?? null,
+      lead_id: job.leadId,
+      sender_id: job.senderId,
+      message_id: job.messageId,
+      status: "scheduled",
+      scheduled_at: job.scheduledAt,
+      idempotency_key: `${job.campaignId}-${job.leadId}-${job.stepId ?? "initial"}`,
+    })
+    .select()
+    .single();
 
-  return NextResponse.json({ ok: true });
+  if (error) return NextResponse.json({ error: "Unable to enqueue email job" }, { status: 409 });
+  return NextResponse.json(data, { status: 201 });
 }

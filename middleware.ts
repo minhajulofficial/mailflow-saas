@@ -1,10 +1,8 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/request";
+import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { securityHeadersMiddleware, isSSRFUrl } from "@/lib/security";
-import { rateLimitMiddleware } from "@/lib/rate-limit";
+import { securityHeadersMiddleware } from "@/lib/security";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -35,15 +33,21 @@ export function middleware(request: NextRequest) {
     },
   });
 
-  const pathname = request.nextUrl.pathname;
+  const { pathname } = request.nextUrl;
 
   // Protect /app routes - require authentication
   if (pathname.startsWith("/app")) {
-    const { data } = supabase.auth.getUser();
-    if (!data.user) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
       const loginUrl = new URL("/login", request.url);
       loginUrl.searchParams.set("redirectTo", pathname);
-      return NextResponse.redirect(loginUrl);
+      const redirectResponse = NextResponse.redirect(loginUrl);
+      securedResponse.cookies.getAll().forEach((cookie) => {
+        redirectResponse.cookies.set(cookie);
+      });
+      return securityHeadersMiddleware(request, redirectResponse);
     }
   }
 

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
+import { isSSRFUrl } from "@/lib/security";
 import { z } from "zod";
 
 const schema = z.object({
-  sourceType: z.string(),
+  sourceType: z.enum(["google-maps", "website-list", "directory", "linkedin"]),
   niche: z.string().min(1),
   country: z.string().min(1),
   city: z.string().optional(),
@@ -16,7 +17,7 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -26,6 +27,17 @@ export async function POST(request: Request) {
   const result = schema.safeParse(body);
   if (!result.success) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
+  }
+
+  const suppliedUrls = (result.data.urls ?? "")
+    .split(/\r?\n/)
+    .map((url) => url.trim())
+    .filter(Boolean);
+  if (suppliedUrls.some(isSSRFUrl)) {
+    return NextResponse.json(
+      { error: "Only public HTTP or HTTPS URLs can be used for extraction" },
+      { status: 400 }
+    );
   }
 
   const { saveList, ...params } = result.data;
@@ -75,7 +87,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
