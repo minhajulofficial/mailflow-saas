@@ -34,11 +34,10 @@ export default function Sidebar() {
           <Link
             key={item.name}
             href={item.href}
-            className={({ isActive }) =>
-              `flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                isActive ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent"
-              }`
-            }
+            className={cn(
+              "flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              pathname === item.href ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent"
+            )}
           >
             {item.icon} {item.name}
           </Link>
