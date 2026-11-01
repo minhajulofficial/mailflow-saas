@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@/lib/supabase/server";
+import { createAuditLog } from "@/lib/audit";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
