@@ -11,7 +11,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("integrations")
-    .select("id, provider, label, enabled, status")
+    .select("id, provider, label, enabled, status, encrypted_secret, iv")
     .eq("user_id", user.id)
     .eq("provider", "apify")
     .maybeSingle();
