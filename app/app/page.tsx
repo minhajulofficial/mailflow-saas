@@ -112,28 +112,28 @@ export default function DashboardPage() {
               title="Total Leads"
               value={stats.leads}
               icon="Users"
-              trend="+12% this month"
+              trend="Across all lead lists"
               color="bg-blue-500"
             />
             <StatCard
-              title="Active Campaigns"
+              title="Campaigns"
               value={stats.campaigns}
               icon="Mail"
-              trend="+2 this week"
+              trend="All campaigns"
               color="bg-green-500"
             />
             <StatCard
               title="Emails Sent"
               value={stats.sentEmails}
               icon="PaperPlane"
-              trend="+5% today"
+              trend="Successful sends"
               color="bg-purple-500"
             />
             <StatCard
               title="Open Rate"
               value={`${stats.openRate}%`}
               icon="Eye"
-              trend="Estimated rate"
+              trend="Estimated (Apple MPP)"
               color="bg-orange-500"
             />
           </div>

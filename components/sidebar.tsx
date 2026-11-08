@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useAuth } from "@/hooks/use-auth";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -72,7 +71,9 @@ export default function Sidebar({ user }: SidebarProps) {
               href={item.href}
               className={cn(
                 "flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                pathname === item.href
+                pathname === item.href ||
+                  (item.href.startsWith("/app/settings") &&
+                    pathname.startsWith("/app/settings"))
                   ? "bg-primary text-primary-foreground"
                   : "text-foreground hover:bg-accent"
               )}

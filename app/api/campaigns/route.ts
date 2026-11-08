@@ -15,9 +15,12 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // `campaigns.sender_ids` is a uuid[] column, so there is no PostgREST
+  // relationship to embed `sender_accounts` through. Embedding it made the
+  // whole request fail with a 400 and left the dashboard/campaigns page empty.
   const { data, error } = await supabase
     .from("campaigns")
-    .select("*, campaign_steps(*), sender_accounts(*)")
+    .select("*, campaign_steps(*)")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 

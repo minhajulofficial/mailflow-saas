@@ -84,8 +84,9 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-1">
-          <Label>Source Type</Label>
+          <Label htmlFor="source-type">Source Type</Label>
           <Select
+            id="source-type"
             value={form.sourceType}
             onChange={(e) =>
               setForm({ ...form, sourceType: e.target.value as any })
@@ -100,24 +101,27 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Niche / Keyword</Label>
+          <Label htmlFor="niche">Niche / Keyword</Label>
           <Input
+            id="niche"
             value={form.niche}
             onChange={(e) => setForm({ ...form, niche: e.target.value })}
             placeholder="e.g. dentist"
           />
         </div>
         <div className="space-y-1">
-          <Label>Country</Label>
+          <Label htmlFor="country">Country</Label>
           <Input
+            id="country"
             value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })}
             placeholder="e.g. United States"
           />
         </div>
         <div className="space-y-1">
-          <Label>City / Area</Label>
+          <Label htmlFor="city">City / Area</Label>
           <Input
+            id="city"
             value={form.city}
             onChange={(e) => setForm({ ...form, city: e.target.value })}
             placeholder="Optional"
@@ -127,8 +131,9 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
 
       {(form.sourceType === "website-list" || form.sourceType === "directory") && (
         <div className="space-y-1">
-          <Label>Website URLs (one per line)</Label>
+          <Label htmlFor="urls">Website URLs (one per line)</Label>
           <Textarea
+            id="urls"
             value={form.urls}
             onChange={(e) => setForm({ ...form, urls: e.target.value })}
             placeholder="https://example.com\nhttps://example2.com"
@@ -138,8 +143,9 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="space-y-1">
-          <Label>Max Leads</Label>
+          <Label htmlFor="max-leads">Max Leads</Label>
           <Input
+            id="max-leads"
             type="number"
             value={form.maxLeads}
             onChange={(e) =>
@@ -148,20 +154,22 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
           />
         </div>
         <div className="space-y-1">
-          <Label>Save Into List</Label>
+          <Label htmlFor="save-list">Save Into List</Label>
           <Input
+            id="save-list"
             value={form.saveList}
             onChange={(e) => setForm({ ...form, saveList: e.target.value })}
           />
         </div>
         <div className="space-y-1 flex items-end">
           <Checkbox
+            id="require-email"
             checked={form.requireEmail}
             onChange={(e) =>
               setForm({ ...form, requireEmail: e.target.checked })
             }
           />
-          <Label>Require email only</Label>
+          <Label htmlFor="require-email">Require email only</Label>
         </div>
       </div>
 

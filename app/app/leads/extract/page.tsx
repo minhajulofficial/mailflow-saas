@@ -3,14 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import ExtractForm from "@/components/extract-form";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useSonner } from "@/hooks/use-sonner";
-import { createBrowserClient } from "@/lib/supabase/browser";
 
 export default function ExtractPage() {
-  const supabase = createBrowserClient();
   const toast = useSonner();
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

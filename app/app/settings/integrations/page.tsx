@@ -158,8 +158,9 @@ export default function IntegrationsPage() {
           <form onSubmit={handleAdd} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1">
-                <Label>Provider</Label>
+                <Label htmlFor="provider">Provider</Label>
                 <Select
+                  id="provider"
                   value={form.provider}
                   onChange={(e) => setForm({ ...form, provider: e.target.value })}
                 >
@@ -172,8 +173,9 @@ export default function IntegrationsPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>API Key / Secret</Label>
+                <Label htmlFor="secret">API Key / Secret</Label>
                 <Input
+                  id="secret"
                   type="password"
                   value={form.secret}
                   onChange={(e) => setForm({ ...form, secret: e.target.value })}
@@ -181,16 +183,17 @@ export default function IntegrationsPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Label (optional)</Label>
+                <Label htmlFor="label">Label (optional)</Label>
                 <Input
+                  id="label"
                   value={form.label}
                   onChange={(e) => setForm({ ...form, label: e.target.value })}
                   placeholder="e.g. My Apify Key"
                 />
               </div>
             </div>
-            <Button type="submit" disabled={adding} className="w-full">
-              {adding ? "Testing and saving..." : "Add Integration"}
+            <Button type="submit" disabled={adding} loading={adding} className="w-full">
+              Add Integration
             </Button>
           </form>
         </CardContent>

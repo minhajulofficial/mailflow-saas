@@ -26,6 +26,7 @@ interface LeadRow {
 export default function LeadsPage() {
   const toast = useSonner();
   const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -38,15 +39,22 @@ export default function LeadsPage() {
     params.set("page", "1");
     params.set("pageSize", "100");
 
-    const res = await fetch(`/api/leads?${params}`, {
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const res = await fetch(`/api/leads?${params}`, {
+        headers: { Accept: "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not load leads");
+      }
       setLeads(data.leads || []);
+      setTotal(data.total || 0);
+    } catch (err: any) {
+      toast.error(err?.message || "Could not load leads");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [search, statusFilter]);
+  }, [search, statusFilter, toast]);
 
   useEffect(() => {
     fetchLeads();
@@ -102,16 +110,21 @@ export default function LeadsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="space-y-1">
-          <Label>Search</Label>
+          <Label htmlFor="lead-search">Search</Label>
           <Input
+            id="lead-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, company, email..."
           />
         </div>
         <div className="space-y-1">
-          <Label>Status</Label>
-          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <Label htmlFor="lead-status">Status</Label>
+          <Select
+            id="lead-status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
             <option value="">All</option>
             {["new", "contacted", "replied", "interested", "won", "lost"].map((s) => (
               <option key={s} value={s}>{s}</option>
@@ -119,13 +132,21 @@ export default function LeadsPage() {
           </Select>
         </div>
         <div className="space-y-1 flex items-end">
-          <Button onClick={() => setSearch("")}>Clear</Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSearch("");
+              setStatusFilter("");
+            }}
+          >
+            Clear filters
+          </Button>
         </div>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Leads ({leads.length})</CardTitle>
+          <CardTitle>Leads ({total})</CardTitle>
           <CardDescription>Your extracted leads. Export to CSV or add to campaigns.</CardDescription>
         </CardHeader>
         <CardContent>

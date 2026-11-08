@@ -38,19 +38,28 @@ export default function TemplatesPage() {
   }, []);
 
   async function fetchTemplates() {
-    const res = await fetch("/api/templates", {
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setTemplates(data || []);
+    try {
+      const res = await fetch("/api/templates", {
+        headers: { Accept: "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not load templates");
+      }
+      setTemplates(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      toast.error(err?.message || "Could not load templates");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim() || !form.subject.trim() || !form.bodyHtml.trim()) return;
+    if (!form.name.trim() || !form.subject.trim() || !form.bodyHtml.trim()) {
+      toast.error("Name, subject, and body are all required");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetch("/api/templates", {
@@ -63,12 +72,15 @@ export default function TemplatesPage() {
           isAi: form.isAi,
         }),
       });
-      if (!res.ok) throw new Error("Failed to create template");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Failed to create template");
+      }
       setForm({ name: "", subject: "", bodyHtml: "", isAi: false });
-      fetchTemplates();
       toast.success("Template created");
-    } catch {
-      toast.error("Failed to create template");
+      await fetchTemplates();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create template");
     } finally {
       setCreating(false);
     }
@@ -100,32 +112,36 @@ export default function TemplatesPage() {
         <CardContent>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-1">
-              <Label>Template Name</Label>
+              <Label htmlFor="template-name">Template Name</Label>
               <Input
+                id="template-name"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="e.g. Cold Outreach Intro"
               />
             </div>
             <div className="space-y-1">
-              <Label>Subject</Label>
+              <Label htmlFor="template-subject">Subject</Label>
               <Input
+                id="template-subject"
                 value={form.subject}
                 onChange={(e) => setForm({ ...form, subject: e.target.value })}
                 placeholder="e.g. Quick question about {{company}}"
               />
             </div>
             <div className="space-y-1">
-              <Label>Body (HTML)</Label>
+              <Label htmlFor="template-body">Body (HTML)</Label>
               <Textarea
+                id="template-body"
                 value={form.bodyHtml}
                 onChange={(e) => setForm({ ...form, bodyHtml: e.target.value })}
                 placeholder="Hi {{first_name}},..."
                 className="h-48 font-mono text-sm"
               />
             </div>
-            <div className="space-y-1 flex items-start">
+            <div className="space-y-1 flex items-start gap-2">
               <input
+                id="template-ai"
                 type="checkbox"
                 checked={form.isAi}
                 onChange={(e) =>
@@ -133,10 +149,10 @@ export default function TemplatesPage() {
                 }
                 className="mt-1 h-4 w-4"
               />
-              <Label>AI-generated</Label>
+              <Label htmlFor="template-ai">AI-generated</Label>
             </div>
-            <Button type="submit" disabled={creating} className="w-full">
-              {creating ? "Creating..." : "Create Template"}
+            <Button type="submit" disabled={creating} loading={creating} className="w-full">
+              Create Template
             </Button>
           </form>
         </CardContent>
