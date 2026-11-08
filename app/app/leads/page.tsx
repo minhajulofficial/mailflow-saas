@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSonner } from "@/hooks/use-sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,13 @@ interface LeadRow {
   tags: string[];
 }
 
+interface LeadList {
+  id: string;
+  name: string;
+  lead_count: number;
+  email_count: number;
+}
+
 export default function LeadsPage() {
   const toast = useSonner();
   const [leads, setLeads] = useState<LeadRow[]>([]);
@@ -30,6 +37,17 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [lists, setLists] = useState<LeadList[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [addForm, setAddForm] = useState({
+    person_name: "",
+    company: "",
+    email: "",
+    list_id: "",
+  });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -60,9 +78,77 @@ export default function LeadsPage() {
     fetchLeads();
   }, [fetchLeads]);
 
+  useEffect(() => {
+    fetch("/api/lead-lists", { headers: { Accept: "application/json" } })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setLists(Array.isArray(data) ? data : []))
+      .catch(() => undefined);
+  }, []);
+
+  const handleAddLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addForm.email.trim()) {
+      toast.error("Email is required");
+      return;
+    }
+    setAdding(true);
+    try {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          person_name: addForm.person_name || undefined,
+          company: addForm.company || undefined,
+          email: addForm.email,
+          list_id: addForm.list_id || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not add lead");
+      }
+      toast.success("Lead added");
+      setAddForm({ person_name: "", company: "", email: "", list_id: "" });
+      setShowAdd(false);
+      await fetchLeads();
+    } catch (err: any) {
+      toast.error(err?.message || "Could not add lead");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const csv = await file.text();
+      const res = await fetch("/api/leads/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Import failed");
+      }
+      toast.success(
+        `Imported ${data.inserted} lead${data.inserted === 1 ? "" : "s"}` +
+          (data.duplicates ? ` · ${data.duplicates} duplicates skipped` : "") +
+          (data.invalid ? ` · ${data.invalid} invalid rows` : "")
+      );
+      await fetchLeads();
+    } catch (err: any) {
+      toast.error(err?.message || "Import failed");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const handleExport = async () => {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
+    if (statusFilter) params.set("status", statusFilter);
     params.set("pageSize", "10000");
 
     const res = await fetch(`/api/leads/export?${params}`, {
@@ -84,6 +170,40 @@ export default function LeadsPage() {
     }
   };
 
+  const handleStatusChange = async (id: string, status: string) => {
+    try {
+      const res = await fetch(`/api/leads/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not update lead");
+      }
+      setLeads((prev) => prev.map((lead) => (lead.id === id ? { ...lead, status } : lead)));
+      toast.success("Lead updated");
+    } catch (err: any) {
+      toast.error(err?.message || "Could not update lead");
+    }
+  };
+
+  const handleDeleteLead = async (id: string, label: string) => {
+    if (!window.confirm(`Delete lead "${label}"? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/leads/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not delete lead");
+      }
+      setLeads((prev) => prev.filter((lead) => lead.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      toast.success("Lead deleted");
+    } catch (err: any) {
+      toast.error(err?.message || "Could not delete lead");
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -102,11 +222,97 @@ export default function LeadsPage() {
             Manage your extracted B2B leads.
           </p>
         </div>
-        <Button onClick={handleExport} className="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-          Export CSV
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setShowAdd((value) => !value)}>
+            {showAdd ? "Close" : "Add lead"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            loading={importing}
+            disabled={importing}
+          >
+            Import CSV
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImportFile(file);
+            }}
+          />
+          <Button onClick={handleExport} className="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Export CSV
+          </Button>
+        </div>
       </div>
+
+      {showAdd && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Add a lead</CardTitle>
+            <CardDescription>
+              Add one lead manually. CSV files need an <code>email</code> column.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleAddLead} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-1">
+                  <Label htmlFor="lead-email">Email *</Label>
+                  <Input
+                    id="lead-email"
+                    type="email"
+                    value={addForm.email}
+                    onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                    placeholder="lead@company.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="lead-name">Person name</Label>
+                  <Input
+                    id="lead-name"
+                    value={addForm.person_name}
+                    onChange={(e) => setAddForm({ ...addForm, person_name: e.target.value })}
+                    placeholder="Jane Doe"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="lead-company">Company</Label>
+                  <Input
+                    id="lead-company"
+                    value={addForm.company}
+                    onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
+                    placeholder="Acme Inc"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="lead-list">List</Label>
+                  <Select
+                    id="lead-list"
+                    value={addForm.list_id}
+                    onChange={(e) => setAddForm({ ...addForm, list_id: e.target.value })}
+                  >
+                    <option value="">No list</option>
+                    {lists.map((list) => (
+                      <option key={list.id} value={list.id}>
+                        {list.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <Button type="submit" loading={adding} disabled={adding}>
+                Add lead
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="space-y-1">
@@ -169,6 +375,7 @@ export default function LeadsPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Collected</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -181,7 +388,16 @@ export default function LeadsPage() {
                       <Badge variant="outline">{lead.email_status || "unverified"}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{lead.status || "new"}</Badge>
+                      <Select
+                        aria-label={`Status for ${lead.email || lead.person_name || "lead"}`}
+                        value={lead.status || "new"}
+                        onChange={(e) => handleStatusChange(lead.id, e.target.value)}
+                        className="h-8"
+                      >
+                        {["new", "contacted", "replied", "interested", "won", "lost"].map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </Select>
                     </TableCell>
                     <TableCell>
                       {lead.city || ""}, {lead.country || ""}
@@ -190,6 +406,20 @@ export default function LeadsPage() {
                       {lead.collected_at
                         ? new Date(lead.collected_at).toLocaleDateString()
                         : "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() =>
+                          handleDeleteLead(
+                            lead.id,
+                            lead.email || lead.person_name || "this lead"
+                          )
+                        }
+                      >
+                        Delete
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

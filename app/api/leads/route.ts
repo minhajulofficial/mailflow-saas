@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
 import { z } from "zod";
 
-const schema = z.object({
+const querySchema = z.object({
   search: z.string().optional(),
   country: z.string().optional(),
   niche: z.string().optional(),
@@ -12,6 +12,23 @@ const schema = z.object({
   pageSize: z.string().optional(),
 });
 
+const createSchema = z.object({
+  person_name: z.string().trim().max(200).optional(),
+  company: z.string().trim().max(200).optional(),
+  email: z.string().trim().toLowerCase().email("Enter a valid email"),
+  phone: z.string().trim().max(60).optional(),
+  website: z.string().trim().max(300).optional(),
+  country: z.string().trim().max(120).optional(),
+  city: z.string().trim().max(120).optional(),
+  niche: z.string().trim().max(120).optional(),
+  list_id: z.string().uuid().nullable().optional(),
+});
+
+/** Strip PostgREST `or` operators so a search string cannot alter the filter. */
+function sanitizeSearch(value: string) {
+  return value.replace(/[,()%*]/g, " ").trim();
+}
+
 export async function GET(request: Request) {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -20,23 +37,26 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const query = schema.parse(Object.fromEntries(searchParams));
+  const query = querySchema.parse(Object.fromEntries(searchParams));
 
   let q = supabase
     .from("leads")
     .select("*, lead_lists(name)", { count: "exact" })
     .eq("user_id", user.id);
 
-  if (query.search) {
-    q = q.or(`person_name.ilike.%${query.search}%,company.ilike.%${query.search}%,email.ilike.%${query.search}%`);
+  const search = query.search ? sanitizeSearch(query.search) : "";
+  if (search) {
+    q = q.or(
+      `person_name.ilike.%${search}%,company.ilike.%${search}%,email.ilike.%${search}%`
+    );
   }
   if (query.country) q = q.eq("country", query.country);
   if (query.niche) q = q.eq("niche", query.niche);
   if (query.status) q = q.eq("status", query.status);
   if (query.listId) q = q.eq("list_id", query.listId);
 
-  const page = parseInt(query.page || "1", 10);
-  const pageSize = parseInt(query.pageSize || "20", 10);
+  const page = Math.max(1, parseInt(query.page || "1", 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(query.pageSize || "20", 10) || 20));
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
@@ -49,4 +69,65 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ leads: data || [], total: count || 0, page, pageSize });
+}
+
+export async function POST(request: Request) {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message || "Invalid lead" },
+      { status: 400 }
+    );
+  }
+
+  const data = parsed.data;
+
+  if (data.list_id) {
+    const { data: list } = await supabase
+      .from("lead_lists")
+      .select("id")
+      .eq("id", data.list_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!list) {
+      return NextResponse.json({ error: "That list does not belong to you" }, { status: 400 });
+    }
+  }
+
+  const { data: existing } = await supabase
+    .from("leads")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("email", data.email)
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json({ error: "A lead with that email already exists" }, { status: 409 });
+  }
+
+  const { data: lead, error } = await supabase
+    .from("leads")
+    .insert({
+      ...data,
+      list_id: data.list_id ?? null,
+      source: "manual",
+      status: "new",
+      email_status: "unverified",
+    })
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json(lead, { status: 201 });
 }

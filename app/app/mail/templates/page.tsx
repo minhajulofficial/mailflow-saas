@@ -86,6 +86,23 @@ export default function TemplatesPage() {
     }
   }
 
+  async function handleDelete(id: string, name: string) {
+    if (!window.confirm(`Delete template "${name}"? Campaigns using it will lose the template.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Could not delete template");
+      }
+      toast.success("Template deleted");
+      await fetchTemplates();
+    } catch (err: any) {
+      toast.error(err?.message || "Could not delete template");
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6">
@@ -175,6 +192,7 @@ export default function TemplatesPage() {
                   <TableHead>Subject</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Created</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -188,6 +206,15 @@ export default function TemplatesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>{new Date(t.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleDelete(t.id, t.name)}
+                      >
+                        Delete
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

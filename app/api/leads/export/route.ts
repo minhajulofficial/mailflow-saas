@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const listId = searchParams.get("listId");
   const search = searchParams.get("search");
+  const status = searchParams.get("status");
 
   let q = supabase
     .from("leads")
@@ -18,8 +19,14 @@ export async function GET(request: Request) {
     .eq("user_id", user.id);
 
   if (listId) q = q.eq("list_id", listId);
+  if (status) q = q.eq("status", status);
   if (search) {
-    q = q.or(`person_name.ilike.%${search}%,company.ilike.%${search}%,email.ilike.%${search}%`);
+    const term = search.replace(/[,()%*]/g, " ").trim();
+    if (term) {
+      q = q.or(
+        `person_name.ilike.%${term}%,company.ilike.%${term}%,email.ilike.%${term}%`
+      );
+    }
   }
 
   const { data, error } = await q.order("collected_at", { ascending: false });

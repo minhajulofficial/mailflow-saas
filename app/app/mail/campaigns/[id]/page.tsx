@@ -160,6 +160,19 @@ export default function CampaignDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!window.confirm("Delete this campaign and its queued emails? This cannot be undone.")) {
+      return;
+    }
+    const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success("Campaign deleted");
+      router.push("/app/mail/campaigns");
+    } else {
+      toast.error("Could not delete campaign");
+    }
+  }
+
   const statusBadge = (status: string) => {
     const variant =
       status === "failed" || status === "cancelled"
@@ -203,6 +216,9 @@ export default function CampaignDetailPage() {
           )}
           <Button variant="destructive" onClick={() => handleStatus("cancelled")}>
             Cancel
+          </Button>
+          <Button variant="ghost" onClick={handleDelete}>
+            Delete
           </Button>
         </div>
       </div>
