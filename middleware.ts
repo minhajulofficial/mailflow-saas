@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient as _createServerClient } from "@supabase/ssr";
 import { securityHeadersMiddleware } from "@/lib/security";
 
 export async function middleware(request: NextRequest) {
@@ -19,7 +19,7 @@ export async function middleware(request: NextRequest) {
     return securedResponse;
   }
 
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+  const supabase = _createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       get(name: string) {
         return request.cookies.get(name)?.value;
