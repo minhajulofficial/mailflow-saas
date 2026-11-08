@@ -1,28 +1,111 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import ExtractForm from "@/components/extract-form";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { createBrowserClient } from "@/lib/supabase/browser";
+
 export default function ExtractPage() {
+  const supabase = createBrowserClient();
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchJobs();
+  }, []);
+
+  async function fetchJobs() {
+    const res = await fetch("/api/extract", {
+      headers: { Accept: "application/json" },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setJobs(data || []);
+    }
+    setLoading(false);
+  }
+
+  const statusBadge = (status: string) => {
+    const variants: Record<string, string> = {
+      queued: "secondary",
+      running: "outline",
+      completed: "outline",
+      failed: "destructive",
+    };
+    return <Badge variant={(variants[status] || "outline") as any}>{status}</Badge>;
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 space-y-6">
+        <h1 className="text-2xl font-bold">Lead Extract</h1>
+        <p className="text-muted-foreground">Loading jobs...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Lead Extract</h1>
-          <p className="text-muted-foreground">Extract B2B leads from Google Maps, websites, and directories.</p>
+          <p className="text-muted-foreground">
+            Extract B2B leads from Google Maps, websites, and directories.
+          </p>
         </div>
+        <Button asChild>
+          <a href="/app/settings/integrations">
+            Connect Apify
+          </a>
+        </Button>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <div className="rounded-lg border p-6">
-            <h2 className="text-lg font-semibold mb-4">Start Extraction</h2>
-            <div className="p-4 border rounded-lg">
-              <p className="text-sm text-muted-foreground">
-                Lead extraction form loads here. Configure your source, niche, location, and lead limits.
-              </p>
-            </div>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Start Extraction</CardTitle>
+              <CardDescription>
+                Configure your source, niche, location, and lead limits.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ExtractForm onJobCreated={fetchJobs} />
+            </CardContent>
+          </Card>
         </div>
         <div className="col-span-1">
-          <div className="rounded-lg border p-6">
-            <h2 className="text-lg font-semibold mb-4">Recent Jobs</h2>
-            <div className="text-muted-foreground text-sm">No jobs yet.</div>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Jobs</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {jobs.length === 0 ? (
+                <p className="text-muted-foreground text-sm">No jobs yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Job</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Leads</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {jobs.slice(0, 5).map((job) => (
+                      <TableRow key={job.id}>
+                        <TableCell className="text-sm">{job.params?.niche || "N/A"}</TableCell>
+                        <TableCell className="text-sm">{statusBadge(job.status)}</TableCell>
+                        <TableCell className="text-sm">{job.result_count ?? 0}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

@@ -12,6 +12,13 @@ const createJobSchema = z.object({
   scheduledAt: z.string().datetime(),
 });
 
+const sendJobSchema = z.object({
+  jobId: z.string().uuid(),
+  status: z.enum(["sent", "failed"]),
+  providerMessageId: z.string().optional(),
+  error: z.string().max(1000).optional(),
+});
+
 export async function GET(request: Request) {
   if (!isAuthorizedWorker(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,7 +27,9 @@ export async function GET(request: Request) {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("email_jobs")
-    .select("*, leads(*), campaigns(name)")
+    .select(
+      "*, leads(email, person_name, company), campaigns(name, user_id), sender_accounts(*)"
+    )
     .eq("status", "scheduled")
     .lte("scheduled_at", new Date().toISOString())
     .limit(100)

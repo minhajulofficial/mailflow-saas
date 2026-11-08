@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useSonner } from "@/hooks/use-sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,7 +10,13 @@ import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 
-export default function ExtractForm() {
+interface ExtractFormProps {
+  onJobCreated?: () => void;
+}
+
+export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
+  const router = useRouter();
+  const toast = useSonner();
   const [form, setForm] = useState({
     sourceType: "google-maps",
     niche: "",
@@ -16,21 +24,35 @@ export default function ExtractForm() {
     city: "",
     urls: "",
     maxLeads: 100,
+    requireEmail: false,
     saveList: "Default List",
   });
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch("/api/extract", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    if (res.ok) {
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to start extraction");
+      }
+
       const data = await res.json();
-      alert(`Extraction job created: ${data.jobId}`);
-    } else {
-      alert("Failed to start extraction");
+      toast.success(`Extraction job started (${data.jobId})`);
+      onJobCreated?.();
+      router.refresh();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to start extraction");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -39,41 +61,88 @@ export default function ExtractForm() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-1">
           <Label>Source Type</Label>
-          <Select value={form.sourceType} onChange={(e) => setForm({ ...form, sourceType: e.target.value })}>
+          <Select
+            value={form.sourceType}
+            onChange={(e) =>
+              setForm({ ...form, sourceType: e.target.value as any })
+            }
+          >
             <option value="google-maps">Google Maps</option>
             <option value="website-list">Website URL List</option>
             <option value="directory">Directory URL</option>
+            <option value="linkedin" disabled>
+              LinkedIn (coming soon)
+            </option>
           </Select>
         </div>
         <div className="space-y-1">
           <Label>Niche / Keyword</Label>
-          <Input value={form.niche} onChange={(e) => setForm({ ...form, niche: e.target.value })} placeholder="e.g. dentist" />
+          <Input
+            value={form.niche}
+            onChange={(e) => setForm({ ...form, niche: e.target.value })}
+            placeholder="e.g. dentist"
+          />
         </div>
         <div className="space-y-1">
           <Label>Country</Label>
-          <Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="e.g. United States" />
+          <Input
+            value={form.country}
+            onChange={(e) => setForm({ ...form, country: e.target.value })}
+            placeholder="e.g. United States"
+          />
         </div>
         <div className="space-y-1">
           <Label>City / Area</Label>
-          <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Optional" />
+          <Input
+            value={form.city}
+            onChange={(e) => setForm({ ...form, city: e.target.value })}
+            placeholder="Optional"
+          />
         </div>
       </div>
-      <div className="space-y-1">
-        <Label>Website URLs (one per line)</Label>
-        <Textarea value={form.urls} onChange={(e) => setForm({ ...form, urls: e.target.value })} placeholder="https://example.com\nhttps://example2.com" />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      {(form.sourceType === "website-list" || form.sourceType === "directory") && (
+        <div className="space-y-1">
+          <Label>Website URLs (one per line)</Label>
+          <Textarea
+            value={form.urls}
+            onChange={(e) => setForm({ ...form, urls: e.target.value })}
+            placeholder="https://example.com\nhttps://example2.com"
+          />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="space-y-1">
           <Label>Max Leads</Label>
-          <Input type="number" value={form.maxLeads} onChange={(e) => setForm({ ...form, maxLeads: parseInt(e.target.value) || 100 })} />
+          <Input
+            type="number"
+            value={form.maxLeads}
+            onChange={(e) =>
+              setForm({ ...form, maxLeads: parseInt(e.target.value) || 100 })
+            }
+          />
         </div>
         <div className="space-y-1">
           <Label>Save Into List</Label>
-          <Input value={form.saveList} onChange={(e) => setForm({ ...form, saveList: e.target.value })} />
+          <Input
+            value={form.saveList}
+            onChange={(e) => setForm({ ...form, saveList: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1 flex items-end">
+          <Checkbox
+            checked={form.requireEmail}
+            onChange={(e) =>
+              setForm({ ...form, requireEmail: e.target.checked })
+            }
+          />
+          <Label>Require email only</Label>
         </div>
       </div>
-      <Button type="submit" className="w-full bg-primary text-primary-foreground">
-        Start Extraction
+
+      <Button type="submit" disabled={submitting} className="w-full bg-primary text-primary-foreground">
+        {submitting ? "Starting extraction..." : "Start Extraction"}
       </Button>
     </form>
   );

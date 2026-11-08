@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import { isSSRFUrl } from "@/lib/security";
 import { z } from "zod";
+import { createAuditLog } from "@/lib/audit";
+import {
+  getApifyKey,
+  validateExtractionUrls,
+  buildApifyInput,
+  normalizeApifyOutput,
+  runApifyActor,
+  saveLeadsForJob,
+} from "@/lib/apify";
 
 const schema = z.object({
   sourceType: z.enum(["google-maps", "website-list", "directory", "linkedin"]),
@@ -29,18 +37,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
-  const suppliedUrls = (result.data.urls ?? "")
+  const { saveList, ...params } = result.data;
+
+  // SSRF validation on user-supplied URLs
+  const suppliedUrls = (params.urls ?? "")
     .split(/\r?\n/)
     .map((url) => url.trim())
     .filter(Boolean);
-  if (suppliedUrls.some(isSSRFUrl)) {
-    return NextResponse.json(
-      { error: "Only public HTTP or HTTPS URLs can be used for extraction" },
-      { status: 400 }
-    );
+  const urlCheck = validateExtractionUrls(suppliedUrls);
+  if (!urlCheck.ok) {
+    return NextResponse.json({ error: urlCheck.error }, { status: 400 });
   }
-
-  const { saveList, ...params } = result.data;
 
   // Create or reuse lead list
   let listId: string | null = null;
@@ -65,6 +72,15 @@ export async function POST(request: Request) {
     listId = newList.id;
   }
 
+  // Get Apify key
+  const apifyKey = await getApifyKey(user.id);
+  if (!apifyKey) {
+    return NextResponse.json(
+      { error: "Apify API key not configured. Add it in Settings → Integrations." },
+      { status: 400 }
+    );
+  }
+
   // Create extraction job
   const { data: job, error } = await supabase
     .from("extraction_jobs")
@@ -82,6 +98,62 @@ export async function POST(request: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
+
+  // Run Apify actor asynchronously (fire and forget - job status updated by webhook/poll)
+  // In production this would be a background job; here we trigger inline with a timeout.
+  void (async () => {
+    try {
+      await supabase
+        .from("extraction_jobs")
+        .update({ status: "running" })
+        .eq("id", job.id);
+
+      const actorId = "apify/google-maps-scraper"; // config-driven; override via params if needed
+      const input = buildApifyInput(params);
+
+      const rawOutput = await runApifyActor(apifyKey, actorId, input);
+      const normalized = normalizeApifyOutput(rawOutput, params.sourceType);
+
+      const { inserted } = await saveLeadsForJob({
+        supabase,
+        userId: user.id,
+        jobId: job.id,
+        listId,
+        leads: normalized,
+        source: params.sourceType,
+      });
+
+      await supabase
+        .from("extraction_jobs")
+        .update({
+          status: "completed",
+          progress: 100,
+          result_count: inserted,
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+
+      await createAuditLog(user.id, "extraction_completed", {
+        jobId: job.id,
+        inserted,
+        source: params.sourceType,
+      });
+    } catch (err: any) {
+      await supabase
+        .from("extraction_jobs")
+        .update({
+          status: "failed",
+          error: err.message || "Extraction failed",
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+
+      await createAuditLog(user.id, "extraction_failed", {
+        jobId: job.id,
+        error: err.message || "Extraction failed",
+      });
+    }
+  })();
 
   return NextResponse.json({ jobId: job.id, status: job.status });
 }
