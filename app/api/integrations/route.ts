@@ -4,8 +4,7 @@ import { createAuditLog } from "@/lib/audit";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { encryptSecret, maskSecret } from "@/lib/encryption";
-import { testProviderConnection } from "@/lib/email-provider";
-import { testApifyConnection } from "@/lib/apify";
+import { testProviderSecret } from "@/lib/email-provider";
 
 function getSupabaseAdmin() {
   return createClient(
@@ -44,28 +43,42 @@ export async function POST(request: Request) {
   // Encrypt the secret server-side only
   const encrypted = encryptSecret(secret);
 
-  // Test connection before saving
-  let testResult: { ok: boolean; error?: string } = { ok: false, error: "Unknown provider" };
-  if (provider === "apify") {
-    testResult = await testApifyConnection(secret);
-  } else if (["brevo", "mailjet", "gmail", "smtp"].includes(provider)) {
-    testResult = await testProviderConnection(user.id, provider as any);
-  }
+  // Test connection with the key the user just typed (not the stored one).
+  const testResult = await testProviderSecret(provider, secret);
 
   const supabaseAdmin = getSupabaseAdmin();
-  const { data, error } = await supabaseAdmin
+
+  // One integration per provider per user: update instead of duplicating.
+  const { data: existing } = await supabaseAdmin
     .from("integrations")
-    .insert({
-      user_id: user.id,
-      provider,
-      encrypted_secret: encrypted.ciphertext,
-      iv: encrypted.iv,
-      label,
-      status: testResult.ok ? "connected" : "error",
-      last_tested_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("provider", provider)
+    .maybeSingle();
+
+  const payload = {
+    user_id: user.id,
+    provider,
+    encrypted_secret: encrypted.ciphertext,
+    iv: encrypted.iv,
+    label,
+    status: testResult.ok ? "connected" : "error",
+    last_tested_at: new Date().toISOString(),
+  };
+
+  const { data, error } = existing
+    ? await supabaseAdmin
+        .from("integrations")
+        .update(payload)
+        .eq("id", existing.id)
+        .eq("user_id", user.id)
+        .select()
+        .single()
+    : await supabaseAdmin
+        .from("integrations")
+        .insert(payload)
+        .select()
+        .single();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
@@ -147,10 +160,8 @@ export async function PATCH(request: Request) {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (existing?.provider === "apify") {
-      testResult = await testApifyConnection(secret);
-    } else if (existing?.provider) {
-      testResult = await testProviderConnection(user.id, existing.provider as any);
+    if (existing?.provider) {
+      testResult = await testProviderSecret(existing.provider, secret);
     }
 
     updateData.status = testResult.ok ? "connected" : "error";

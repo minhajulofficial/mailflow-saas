@@ -42,13 +42,17 @@ export interface ButtonProps
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, loading, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
+    const classes = cn(buttonVariants({ variant, size, className }));
+
+    // Radix `Slot` requires exactly one React element child. The spinner used
+    // to render `false` as a second child, which crashed every
+    // `<Button asChild>` usage ("Slot failed to slot onto its children").
+    if (asChild) {
+      return <Comp className={classes} ref={ref} {...props} />;
+    }
+
     return (
-      <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        disabled={loading}
-        {...props}
-      >
+      <Comp className={classes} ref={ref} disabled={loading} {...props}>
         {loading && (
           <svg
             className="animate-spin -ml-1 mr-2 h-4 w-4"

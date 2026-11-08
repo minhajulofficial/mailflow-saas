@@ -235,7 +235,7 @@ export async function saveLeadsForJob({
   }
 
   const newLeads = leads
-    .filter((l) => l.email && !existingEmails.has(l.email.toLowerCase()))
+    .filter((l) => !l.email || !existingEmails.has(String(l.email).toLowerCase()))
     .map((l) => ({
       user_id: userId,
       job_id: jobId,
@@ -270,6 +270,152 @@ export async function saveLeadsForJob({
   if (error) throw error;
 
   return { inserted: newLeads.length };
+}
+
+/**
+ * Actor used for Google Maps extraction. Override with APIFY_ACTOR_ID.
+ */
+export function getApifyActorId(sourceType: string): string {
+  if (process.env.APIFY_ACTOR_ID) return process.env.APIFY_ACTOR_ID;
+  if (sourceType === "google-maps") return "compass~crawler-google-places";
+  // Website/directory crawler
+  return "apify~website-content-crawler";
+}
+
+/**
+ * Start an Apify actor run without waiting for it to finish.
+ * Returns enough information to poll it later from the UI.
+ */
+export async function startApifyActor(
+  apifyToken: string,
+  actorId: string,
+  input: any
+): Promise<{ runId: string; datasetId: string | null }> {
+  const response = await fetch(
+    `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/runs`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apifyToken}`,
+      },
+      body: JSON.stringify(input),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Apify could not start the actor: ${response.status} ${errorText.slice(0, 300)}`
+    );
+  }
+
+  const payload = await response.json();
+  const run = payload?.data;
+  if (!run?.id) throw new Error("Apify did not return a run id");
+
+  return { runId: run.id, datasetId: run.defaultDatasetId ?? null };
+}
+
+export async function getApifyRun(
+  apifyToken: string,
+  runId: string
+): Promise<{ status: string; datasetId: string | null }> {
+  const response = await fetch(`https://api.apify.com/v2/actor-runs/${runId}`, {
+    headers: { Authorization: `Bearer ${apifyToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Could not check Apify run (HTTP ${response.status})`);
+  }
+  const payload = await response.json();
+  return {
+    status: payload?.data?.status || "UNKNOWN",
+    datasetId: payload?.data?.defaultDatasetId ?? null,
+  };
+}
+
+export async function getApifyDatasetItems(
+  apifyToken: string,
+  datasetId: string
+): Promise<any[]> {
+  const response = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&format=json`,
+    { headers: { Authorization: `Bearer ${apifyToken}` } }
+  );
+  if (!response.ok) {
+    throw new Error(`Could not read Apify dataset (HTTP ${response.status})`);
+  }
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Check a running extraction job and finish it when Apify is done.
+ */
+export async function syncExtractionJob({
+  supabase,
+  apifyToken,
+  job,
+}: {
+  supabase: any;
+  apifyToken: string;
+  job: any;
+}): Promise<{ completed: boolean }> {
+  const runId = job?.params?.__runId as string | undefined;
+  if (!runId) return { completed: false };
+
+  const run = await getApifyRun(apifyToken, runId);
+
+  if (run.status === "SUCCEEDED") {
+    const raw = run.datasetId
+      ? await getApifyDatasetItems(apifyToken, run.datasetId)
+      : [];
+    const normalized = normalizeApifyOutput(
+      raw,
+      job?.params?.sourceType || "google-maps"
+    );
+    const { inserted } = await saveLeadsForJob({
+      supabase,
+      userId: job.user_id,
+      jobId: job.id,
+      listId: job.list_id ?? null,
+      leads: normalized,
+      source: job?.params?.sourceType || "google-maps",
+    });
+
+    await supabase
+      .from("extraction_jobs")
+      .update({
+        status: "completed",
+        progress: 100,
+        result_count: inserted,
+        finished_at: new Date().toISOString(),
+        error: null,
+      })
+      .eq("id", job.id);
+
+    await createAuditLog(job.user_id, "extraction_completed", {
+      jobId: job.id,
+      inserted,
+      source: job?.params?.sourceType,
+    });
+
+    return { completed: true };
+  }
+
+  if (["FAILED", "ABORTED", "TIMED-OUT"].includes(run.status)) {
+    await supabase
+      .from("extraction_jobs")
+      .update({
+        status: "failed",
+        error: `Apify run ${run.status.toLowerCase()}`,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", job.id);
+    return { completed: true };
+  }
+
+  return { completed: false };
 }
 
 /**

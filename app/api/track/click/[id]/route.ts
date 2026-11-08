@@ -2,14 +2,26 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createAuditLog } from "@/lib/audit";
+
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
-  const url = request.nextUrl.searchParams.get("url");
+  const rawUrl = request.nextUrl.searchParams.get("url");
   const trackingId = request.nextUrl.pathname.split("/").pop();
-  if (!url) return new Response("Missing url", { status: 400 });
+  if (!rawUrl) return new Response("Missing url", { status: 400 });
   if (!trackingId) return new Response("Missing tracking id", { status: 400 });
 
-  const supabase = createServiceClient();
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    return new Response("Invalid url", { status: 400 });
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    return new Response("Invalid url", { status: 400 });
+  }
 
+  const supabase = createServiceClient();
   const emailJobId = trackingId.replace(/^emailjob-/, "");
 
   // Record click event (best-effort)
@@ -26,7 +38,7 @@ export async function GET(request: NextRequest) {
         email_job_id: j.id,
         type: "click",
         meta: {
-          url,
+          url: target.toString(),
           user_agent: request.headers.get("user-agent") || "",
           ip: request.headers.get("x-forwarded-for") || "",
         },
@@ -34,12 +46,12 @@ export async function GET(request: NextRequest) {
       await createAuditLog(j.campaigns?.user_id || null, "email_clicked", {
         jobId: j.id,
         leadEmail: j.leads?.email,
-        url,
+        url: target.toString(),
       });
     }
   } catch {
     // Swallow errors; still redirect
   }
 
-  return NextResponse.redirect(decodeURIComponent(url));
+  return NextResponse.redirect(target.toString());
 }

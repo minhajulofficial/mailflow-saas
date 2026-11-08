@@ -1,32 +1,53 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ExtractForm from "@/components/extract-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { useSonner } from "@/hooks/use-sonner";
 import { createBrowserClient } from "@/lib/supabase/browser";
 
 export default function ExtractPage() {
   const supabase = createBrowserClient();
+  const toast = useSonner();
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchJobs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/extract", {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(Array.isArray(data) ? data : []);
+      } else if (res.status !== 401) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || "Failed to load extraction jobs");
+      }
+    } catch {
+      toast.error("Failed to load extraction jobs");
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
   useEffect(() => {
     fetchJobs();
-  }, []);
+  }, [fetchJobs]);
 
-  async function fetchJobs() {
-    const res = await fetch("/api/extract", {
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setJobs(data || []);
-    }
-    setLoading(false);
-  }
+  // While an Apify run is in progress, poll so the finished run is imported.
+  useEffect(() => {
+    const hasActiveJob = jobs.some(
+      (job) => job.status === "queued" || job.status === "running"
+    );
+    if (!hasActiveJob) return;
+
+    const timer = setInterval(fetchJobs, 8000);
+    return () => clearInterval(timer);
+  }, [jobs, fetchJobs]);
 
   const statusBadge = (status: string) => {
     const variants: Record<string, string> = {
@@ -96,7 +117,16 @@ export default function ExtractPage() {
                   <TableBody>
                     {jobs.slice(0, 5).map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell className="text-sm">{job.params?.niche || "N/A"}</TableCell>
+                        <TableCell className="text-sm">
+                          <div className="font-medium">
+                            {job.params?.niche || "N/A"}
+                          </div>
+                          {job.error && (
+                            <div className="text-xs text-destructive max-w-[180px] truncate" title={job.error}>
+                              {job.error}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-sm">{statusBadge(job.status)}</TableCell>
                         <TableCell className="text-sm">{job.result_count ?? 0}</TableCell>
                       </TableRow>

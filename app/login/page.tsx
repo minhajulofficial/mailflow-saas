@@ -1,25 +1,41 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useSonner } from "@/hooks/use-sonner";
-import { useRouter } from "next/navigation";
+
+type Mode = "login" | "signup";
+
+function safeRedirect(value: string | null) {
+  if (value && value.startsWith("/") && !value.startsWith("//")) return value;
+  return "/app";
+}
 
 export default function LoginPage() {
-  const supabase = createBrowserClient();
+  const supabase = useMemo(() => createBrowserClient(), []);
   const toast = useSonner();
   const router = useRouter();
 
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<Mode>("login");
   const [loading, setLoading] = useState(false);
   const [redirectTo, setRedirectTo] = useState("/app");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("");
@@ -32,26 +48,47 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const r = params.get("redirectTo");
-    if (r) setRedirectTo(r);
+    setRedirectTo(safeRedirect(params.get("redirectTo")));
+    if (params.get("mode") === "signup") setMode("signup");
+    const urlError = params.get("error");
+    if (urlError) setError(urlError);
   }, []);
+
+  const reportError = (message: string) => {
+    setError(message);
+    toast.error(message);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
+    setNotice(null);
+    setNeedsConfirmation(false);
+
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+        body: JSON.stringify({
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Login failed");
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setNeedsConfirmation(data?.code === "email_not_confirmed");
+        throw new Error(data?.error || "Login failed. Please try again.");
+      }
+
       toast.success("Logged in successfully");
-      router.push(redirectTo);
-      router.refresh();
+      // A full navigation guarantees the new auth cookies are sent with the
+      // request for /app. `router.push` alone can race the cookie write and
+      // bounce the user straight back to /login.
+      window.location.assign(safeRedirect(data?.redirectTo || redirectTo));
     } catch (err: any) {
-      toast.error(err.message || "Login failed");
+      reportError(err?.message || "Login failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -60,18 +97,40 @@ export default function LoginPage() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
+    setNotice(null);
+
     try {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: signupName, email: signupEmail, password: signupPassword }),
+        body: JSON.stringify({
+          name: signupName.trim(),
+          email: signupEmail.trim().toLowerCase(),
+          password: signupPassword,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Signup failed");
-      toast.success("Account created! Please verify your email.");
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Signup failed. Please try again.");
+      }
+
+      if (data?.signedIn) {
+        toast.success("Account created. Welcome to MailFlow!");
+        window.location.assign(safeRedirect(data?.redirectTo || "/app"));
+        return;
+      }
+
+      toast.success("Account created! Check your email to confirm it.");
+      setNotice(
+        "Account created. Check your inbox and confirm your email, then sign in."
+      );
+      setLoginEmail(signupEmail.trim().toLowerCase());
+      setLoginPassword("");
       setMode("login");
     } catch (err: any) {
-      toast.error(err.message || "Signup failed");
+      reportError(err?.message || "Signup failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -79,6 +138,7 @@ export default function LoginPage() {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -89,23 +149,57 @@ export default function LoginPage() {
       });
       if (error) throw error;
     } catch (err: any) {
-      toast.error(err.message || "Google login failed");
+      reportError(err?.message || "Google login failed");
       setLoading(false);
     }
   };
 
   const handleForgotPassword = async () => {
+    const email = loginEmail.trim().toLowerCase();
+    if (!email) {
+      reportError("Enter your email address first, then click Forgot password.");
+      return;
+    }
     setLoading(true);
+    setError(null);
+    setNotice(null);
     try {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail }),
+        body: JSON.stringify({ email }),
       });
-      if (!res.ok) throw new Error("Failed to send reset email");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to send reset email");
       toast.success("Password reset email sent");
+      setNotice("If that account exists, a password reset link is on its way.");
     } catch (err: any) {
-      toast.error(err.message || "Failed to send reset email");
+      reportError(err?.message || "Failed to send reset email");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendConfirmation = async () => {
+    const email = loginEmail.trim().toLowerCase();
+    if (!email) {
+      reportError("Enter your email address first.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Could not resend email");
+      toast.success("Confirmation email sent");
+      setNotice("Confirmation email sent — check your inbox and spam folder.");
+      setNeedsConfirmation(false);
+    } catch (err: any) {
+      reportError(err?.message || "Could not resend email");
     } finally {
       setLoading(false);
     }
@@ -125,13 +219,42 @@ export default function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {error && (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {error}
+            </div>
+          )}
+          {notice && (
+            <div
+              role="status"
+              className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400"
+            >
+              {notice}
+            </div>
+          )}
+          {needsConfirmation && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleResendConfirmation}
+              disabled={loading}
+            >
+              Resend confirmation email
+            </Button>
+          )}
+
           {mode === "login" ? (
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handleLogin} className="space-y-4" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="login-email">Email</Label>
                 <Input
                   id="login-email"
                   type="email"
+                  autoComplete="email"
                   placeholder="name@company.com"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
@@ -143,6 +266,7 @@ export default function LoginPage() {
                 <Input
                   id="login-password"
                   type="password"
+                  autoComplete="current-password"
                   placeholder="••••••••"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
@@ -160,16 +284,17 @@ export default function LoginPage() {
                   </Button>
                 </div>
               </div>
-              <Button type="submit" disabled={loading} className="w-full">
+              <Button type="submit" disabled={loading} loading={loading} className="w-full">
                 {loading ? "Signing in..." : "Sign in"}
               </Button>
             </form>
           ) : (
-            <form onSubmit={handleSignup} className="space-y-4">
+            <form onSubmit={handleSignup} className="space-y-4" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="signup-name">Full Name</Label>
                 <Input
                   id="signup-name"
+                  autoComplete="name"
                   placeholder="John Doe"
                   value={signupName}
                   onChange={(e) => setSignupName(e.target.value)}
@@ -181,6 +306,7 @@ export default function LoginPage() {
                 <Input
                   id="signup-email"
                   type="email"
+                  autoComplete="email"
                   placeholder="name@company.com"
                   value={signupEmail}
                   onChange={(e) => setSignupEmail(e.target.value)}
@@ -192,24 +318,27 @@ export default function LoginPage() {
                 <Input
                   id="signup-password"
                   type="password"
-                  placeholder="••••••••"
+                  autoComplete="new-password"
+                  placeholder="At least 6 characters"
+                  minLength={6}
                   value={signupPassword}
                   onChange={(e) => setSignupPassword(e.target.value)}
                   required
                 />
               </div>
-              <Button type="submit" disabled={loading} className="w-full">
+              <Button type="submit" disabled={loading} loading={loading} className="w-full">
                 {loading ? "Creating account..." : "Create account"}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
                 By creating an account, you agree to our{" "}
-                <a href="/terms" className="text-primary hover:underline">
+                <Link href="/terms" className="text-primary hover:underline">
                   Terms
-                </a>{" "}
+                </Link>{" "}
                 and{" "}
-                <a href="/privacy" className="text-primary hover:underline">
+                <Link href="/privacy" className="text-primary hover:underline">
                   Privacy Policy
-                </a>.
+                </Link>
+                .
               </p>
             </form>
           )}
@@ -222,6 +351,7 @@ export default function LoginPage() {
 
           <Button
             type="button"
+            variant="outline"
             onClick={handleGoogleLogin}
             disabled={loading}
             className="w-full flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
@@ -249,7 +379,10 @@ export default function LoginPage() {
                   type="button"
                   variant="link"
                   size="sm"
-                  onClick={() => setMode("signup")}
+                  onClick={() => {
+                    setMode("signup");
+                    setError(null);
+                  }}
                 >
                   Create account
                 </Button>
@@ -261,7 +394,10 @@ export default function LoginPage() {
                   type="button"
                   variant="link"
                   size="sm"
-                  onClick={() => setMode("login")}
+                  onClick={() => {
+                    setMode("login");
+                    setError(null);
+                  }}
                 >
                   Sign in
                 </Button>

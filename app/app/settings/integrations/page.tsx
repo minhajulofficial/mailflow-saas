@@ -24,9 +24,15 @@ const PROVIDERS = [
   { value: "apify", label: "Apify (Lead Extraction)" },
   { value: "brevo", label: "Brevo (Email Sending)" },
   { value: "mailjet", label: "Mailjet (Email Sending)" },
-  { value: "gmail", label: "Gmail SMTP" },
-  { value: "smtp", label: "Custom SMTP" },
+  { value: "gmail", label: "Gmail SMTP (coming soon)", disabled: true },
+  { value: "smtp", label: "Custom SMTP (coming soon)", disabled: true },
 ];
+
+const SECRET_HINTS: Record<string, string> = {
+  apify: "Apify API token (apify_api_...)",
+  brevo: "Brevo API key (xkeysib-...)",
+  mailjet: "API key:secret key (both, separated by a colon)",
+};
 
 export default function IntegrationsPage() {
   const toast = useSonner();
@@ -68,9 +74,13 @@ export default function IntegrationsPage() {
         throw new Error(error.error || "Failed to add integration");
       }
       const data = await res.json();
-      toast.success(
-        `${data.provider} connected${data.testError ? " (test warning: " + data.testError + ")" : ""}`
-      );
+      if (data.testError) {
+        toast.warning(
+          `${data.provider} saved, but the connection test failed: ${data.testError}`
+        );
+      } else {
+        toast.success(`${data.provider} connected`);
+      }
       setForm({ provider: "apify", secret: "", label: "" });
       fetchIntegrations();
     } catch (err: any) {
@@ -82,16 +92,17 @@ export default function IntegrationsPage() {
 
   async function handleTest(id: string) {
     try {
-      const res = await fetch("/api/integrations", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) throw new Error("Test failed");
-      toast.success("Connection test passed");
+      const res = await fetch(`/api/integrations/${id}/test`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Test failed");
+      if (data.ok) {
+        toast.success("Connection test passed");
+      } else {
+        toast.error(data.error || "Connection test failed");
+      }
       fetchIntegrations();
-    } catch {
-      toast.error("Connection test failed");
+    } catch (err: any) {
+      toast.error(err?.message || "Connection test failed");
     }
   }
 
@@ -154,7 +165,7 @@ export default function IntegrationsPage() {
                 >
                   <option value="">Select provider</option>
                   {PROVIDERS.map((p) => (
-                    <option key={p.value} value={p.value}>
+                    <option key={p.value} value={p.value} disabled={(p as any).disabled}>
                       {p.label}
                     </option>
                   ))}
@@ -166,7 +177,7 @@ export default function IntegrationsPage() {
                   type="password"
                   value={form.secret}
                   onChange={(e) => setForm({ ...form, secret: e.target.value })}
-                  placeholder="Enter API key"
+                  placeholder={SECRET_HINTS[form.provider] || "Enter API key"}
                 />
               </div>
               <div className="space-y-1">
@@ -220,8 +231,8 @@ export default function IntegrationsPage() {
                       <div className="flex gap-2">
                         <Button
                           size="sm"
+                          variant="outline"
                           onClick={() => handleTest(integration.id)}
-                          disabled={integration.status === "connected"}
                         >
                           Test
                         </Button>

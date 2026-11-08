@@ -22,7 +22,10 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = schema.parse(Object.fromEntries(searchParams));
 
-  let q = supabase.from("leads").select("*, lead_lists(name)").eq("user_id", user.id);
+  let q = supabase
+    .from("leads")
+    .select("*, lead_lists(name)", { count: "exact" })
+    .eq("user_id", user.id);
 
   if (query.search) {
     q = q.or(`person_name.ilike.%${query.search}%,company.ilike.%${query.search}%,email.ilike.%${query.search}%`);

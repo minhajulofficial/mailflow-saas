@@ -31,6 +31,23 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!form.niche.trim()) {
+      toast.error("Enter a niche or keyword (e.g. dentist).");
+      return;
+    }
+    if (!form.country.trim()) {
+      toast.error("Enter a country (e.g. United States).");
+      return;
+    }
+    if (
+      (form.sourceType === "website-list" || form.sourceType === "directory") &&
+      !form.urls.trim()
+    ) {
+      toast.error("Add at least one URL for this source type.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -40,13 +57,20 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
         body: JSON.stringify(form),
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "Failed to start extraction");
+        const raw = data?.error;
+        const message =
+          typeof raw === "string"
+            ? raw
+            : raw?.fieldErrors
+              ? Object.values(raw.fieldErrors).flat()[0]
+              : "Failed to start extraction";
+        throw new Error(String(message || "Failed to start extraction"));
       }
 
-      const data = await res.json();
-      toast.success(`Extraction job started (${data.jobId})`);
+      toast.success("Extraction job started");
       onJobCreated?.();
       router.refresh();
     } catch (err: any) {
@@ -141,7 +165,7 @@ export default function ExtractForm({ onJobCreated }: ExtractFormProps) {
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting} className="w-full bg-primary text-primary-foreground">
+      <Button type="submit" disabled={submitting} loading={submitting} className="w-full bg-primary text-primary-foreground">
         {submitting ? "Starting extraction..." : "Start Extraction"}
       </Button>
     </form>

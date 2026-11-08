@@ -1,90 +1,135 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createAuditLog } from "@/lib/audit";
+import {
+  getApifyDatasetItems,
+  getApifyKey,
+  normalizeApifyOutput,
+  saveLeadsForJob,
+} from "@/lib/apify";
 
-const apifyAdapterRegistry: Record<string, (raw: any) => any[]> = {
-  "apify/google-maps-scraper": normalizeGoogleMaps,
-};
-
-function normalizeGoogleMaps(raw: any): any[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((item) => ({
-    person_name: item.contactPerson || null,
-    designation: item.designation || null,
-    company: item.name || null,
-    website: item.website || null,
-    email: item.email || null,
-    email_status: "unverified",
-    phone: item.phone || null,
-    facebook: item.facebook || null,
-    instagram: item.instagram || null,
-    linkedin: item.linkedin || null,
-    youtube: item.youtube || null,
-    x_url: item.twitter || null,
-    tiktok: item.tiktok || null,
-    country: item.country || null,
-    state: item.state || null,
-    city: item.city || null,
-    address: item.address || null,
-    niche: item.category || null,
-    source: "google-maps",
-    tags: item.tags || [],
-    status: "new",
-  }));
-}
-
+/**
+ * Apify run webhook. Configure it on the actor with header
+ * `x-apify-webhook-secret: <APIFY_WEBHOOK_SECRET>` (or `?secret=`).
+ *
+ * Accepts either MailFlow's simple payload
+ *   { jobId, status, data? }
+ * or Apify's native webhook payload
+ *   { eventType, resource: { id, status, defaultDatasetId } }.
+ */
 export async function POST(request: Request) {
-  const supabase = createServiceClient();
-  const { runId, status, data, jobId } = await request.json();
-
-  if (!runId || !jobId) {
-    return NextResponse.json({ error: "Missing runId or jobId" }, { status: 400 });
+  const secret = process.env.APIFY_WEBHOOK_SECRET;
+  if (!secret) {
+    return NextResponse.json(
+      { error: "APIFY_WEBHOOK_SECRET is not configured" },
+      { status: 503 }
+    );
   }
 
-  // Update job status
-  await supabase
+  const url = new URL(request.url);
+  const supplied =
+    request.headers.get("x-apify-webhook-secret") ||
+    url.searchParams.get("secret") ||
+    "";
+
+  if (supplied !== secret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const resource = body?.resource || {};
+  const jobId: string | undefined = body?.jobId || resource?.metadata?.jobId;
+  const status: string = body?.status || resource?.status || "";
+  const datasetId: string | undefined =
+    resource?.defaultDatasetId || body?.datasetId;
+
+  if (!jobId) {
+    return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  const { data: job } = await supabase
     .from("extraction_jobs")
-    .update({ status: status === "SUCCEEDED" ? "completed" : "failed", finished_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .select("id, user_id, list_id, status, params")
+    .eq("id", jobId)
+    .maybeSingle();
 
-  if (status === "SUCCEEDED" && data) {
-    const actor = "apify/google-maps-scraper"; // In production, look up from job
-    const normalize = apifyAdapterRegistry[actor];
-    const normalized = normalize ? normalize(data) : data;
+  if (!job) {
+    return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  }
 
-    // Get job to find user_id and list_id
-    const { data: job } = await supabase
-      .from("extraction_jobs")
-      .select("user_id, list_id")
-      .eq("id", jobId)
-      .single();
+  // Idempotent: already finished jobs are acknowledged without changes.
+  if (job.status === "completed" || job.status === "failed") {
+    return NextResponse.json({ ok: true, duplicate: true });
+  }
 
-    if (job) {
-      const leads = normalized.map((lead: any) => ({
-        ...lead,
-        user_id: job.user_id,
-        list_id: job.list_id,
-        job_id: jobId,
-        collected_at: new Date().toISOString(),
-      }));
-
-      // Insert with upsert to handle duplicates (user_id, lower(email))
-      const { error } = await supabase.from("leads").upsert(leads, {
-        onConflict: "user_id, email_lower", // requires functional unique index; fallback handled below
-      });
-
-      if (error) {
-        // Fallback: insert individually, skip duplicates
-        for (const lead of leads) {
-          await supabase.from("leads").insert(lead).select("id");
-        }
-      }
-
+  if (status && status !== "SUCCEEDED") {
+    const failed =
+      status === "FAILED" || status === "ABORTED" || status === "TIMED-OUT";
+    if (failed) {
       await supabase
         .from("extraction_jobs")
-        .update({ result_count: leads.length, progress: 100 })
-        .eq("id", jobId);
+        .update({
+          status: "failed",
+          error: `Apify run ${status.toLowerCase()}`,
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
     }
+    return NextResponse.json({ ok: true });
   }
 
-  return NextResponse.json({ ok: true });
+  let raw: any[] = Array.isArray(body?.data) ? body.data : [];
+  if (raw.length === 0) {
+    const apifyKey = await getApifyKey(job.user_id);
+    if (!apifyKey) {
+      return NextResponse.json(
+        { error: "Apify key not configured for this user" },
+        { status: 400 }
+      );
+    }
+    const dsId = datasetId || job?.params?.__datasetId;
+    if (!dsId) {
+      return NextResponse.json({ error: "Missing dataset id" }, { status: 400 });
+    }
+    raw = await getApifyDatasetItems(apifyKey, dsId);
+  }
+
+  const source = job?.params?.sourceType || "google-maps";
+  const normalized = normalizeApifyOutput(raw, source);
+
+  const { inserted } = await saveLeadsForJob({
+    supabase,
+    userId: job.user_id,
+    jobId: job.id,
+    listId: job.list_id ?? null,
+    leads: normalized,
+    source,
+  });
+
+  await supabase
+    .from("extraction_jobs")
+    .update({
+      status: "completed",
+      progress: 100,
+      result_count: inserted,
+      finished_at: new Date().toISOString(),
+      error: null,
+    })
+    .eq("id", job.id);
+
+  await createAuditLog(job.user_id, "extraction_completed", {
+    jobId: job.id,
+    inserted,
+    source,
+  });
+
+  return NextResponse.json({ ok: true, inserted });
 }

@@ -1,14 +1,35 @@
 "use client";
 
-import * as React from "react";
-import { useToast } from "@/hooks/use-toast";
+import { useMemo } from "react";
+import { toast as sonnerToast } from "sonner";
 
+type ToastOptions = {
+  description?: string;
+  duration?: number;
+  id?: string;
+};
+
+/**
+ * Thin wrapper around Sonner so every screen shows real feedback.
+ * (The old implementation was a no-op, which made failed logins look like
+ * "nothing happens".) The returned object is stable so it can be used in
+ * `useEffect`/`useCallback` dependency arrays.
+ */
 export function useSonner() {
-  const { toast } = useToast();
-  return {
-    success: (message: string, opts?: any) => toast({ title: "Success", description: message, ...opts }),
-    error: (message: string, opts?: any) => toast({ title: "Error", description: message, variant: "destructive", ...opts }),
-    warning: (message: string, opts?: any) => toast({ title: "Warning", description: message, ...opts }),
-    info: (message: string, opts?: any) => toast({ title: "Info", description: message, ...opts }),
-  };
+  return useMemo(
+    () => ({
+      success: (message: string, opts?: ToastOptions) =>
+        sonnerToast.success(message, opts),
+      error: (message: string, opts?: ToastOptions) =>
+        sonnerToast.error(message, opts),
+      warning: (message: string, opts?: ToastOptions) =>
+        sonnerToast.warning(message, opts),
+      info: (message: string, opts?: ToastOptions) =>
+        sonnerToast(message, opts),
+      loading: (message: string, opts?: ToastOptions) =>
+        sonnerToast.loading(message, opts),
+      dismiss: (id?: string) => sonnerToast.dismiss(id),
+    }),
+    []
+  );
 }

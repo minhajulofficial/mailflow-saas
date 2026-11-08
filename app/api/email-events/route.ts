@@ -1,17 +1,35 @@
-import { createServiceClient } from "@/lib/supabase/service";
 import { NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { isAuthorizedWorker } from "@/lib/worker-auth";
 import { createAuditLog } from "@/lib/audit";
 
+/**
+ * Internal endpoint for recording email events. Only the background worker may
+ * call it with the shared worker secret, otherwise anyone could forge send or
+ * bounce events.
+ */
 export async function POST(request: Request) {
-  const supabase = createServiceClient();
-  const body = await request.json();
-  const { emailJobId, type, meta } = body;
-
-  if (!emailJobId || !type) {
-    return NextResponse.json({ error: "emailJobId and type are required" }, { status: 400 });
+  if (!isAuthorizedWorker(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Idempotency check
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { emailJobId, type, meta } = body || {};
+  if (!emailJobId || !type || typeof type !== "string") {
+    return NextResponse.json(
+      { error: "emailJobId and type are required" },
+      { status: 400 }
+    );
+  }
+
+  const supabase = createServiceClient();
+
   const { data: existing } = await supabase
     .from("email_events")
     .select("id")
@@ -31,7 +49,6 @@ export async function POST(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  // Get job and lead info
   const { data: job } = await supabase
     .from("email_jobs")
     .select("*, leads(email, user_id), campaigns(user_id)")
@@ -43,16 +60,21 @@ export async function POST(request: Request) {
       .from("email_jobs")
       .update({ status: "sent", sent_at: new Date().toISOString() })
       .eq("id", emailJobId);
-    await createAuditLog(job?.campaigns?.user_id, "email_sent", { jobId: emailJobId });
+    await createAuditLog(job?.campaigns?.user_id, "email_sent", {
+      jobId: emailJobId,
+    });
   }
 
   if (type === "bounce" || type === "spam" || type === "unsub") {
     if (job?.leads?.email) {
-      await supabase.from("suppression_list").upsert({
-        user_id: job.leads.user_id,
-        email: job.leads.email,
-        reason: type,
-      }, { onConflict: "user_id,email" });
+      await supabase.from("suppression_list").upsert(
+        {
+          user_id: job.leads.user_id,
+          email: job.leads.email,
+          reason: type,
+        },
+        { onConflict: "user_id,email" }
+      );
     }
     await supabase
       .from("email_jobs")

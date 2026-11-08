@@ -1,36 +1,31 @@
 "use client";
 
-import * as React from "react";
-import { useCallback } from "react";
-import {
-  ToastAction,
-  ToastClose,
-  ToastDescription,
-  ToastProvider,
-  ToastTitle,
-  ToastViewport,
-} from "@/components/ui/toast";
+import { toast as sonnerToast } from "sonner";
 
 export const TOAST_LIMIT = 1;
 export const TOAST_REMOVE_DELAY = 1000000;
 
 type ToasterToast = {
-  id: string;
+  id?: string;
   title?: string;
   description?: string;
-  action?: React.ReactNode;
+  variant?: "default" | "destructive" | string;
 };
 
-export function Toast() {
-  return (
-    <ToastProvider>
-      <ToastViewport />
-    </ToastProvider>
-  );
+function messageOf({ title, description }: ToasterToast) {
+  if (title && description) return `${title}: ${description}`;
+  return description || title || "";
 }
 
 export function useToast() {
   return {
-    toast: ({ ...props }: ToasterToast) => {},
+    toast: ({ title, description, variant, id }: ToasterToast) => {
+      const message = messageOf({ title, description });
+      if (variant === "destructive") {
+        return sonnerToast.error(message, { id });
+      }
+      return sonnerToast(message, { id });
+    },
+    dismiss: (id?: string) => sonnerToast.dismiss(id),
   };
 }

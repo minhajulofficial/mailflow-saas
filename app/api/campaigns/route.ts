@@ -1,17 +1,27 @@
 import { createServerClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+
+const createSchema = z.object({
+  name: z.string().trim().min(1, "Campaign name is required").max(200),
+  status: z.enum(["draft", "scheduled", "sending", "paused", "completed", "cancelled"]).optional(),
+  senderIds: z.array(z.string().uuid()).optional(),
+  recipientFilter: z.record(z.string(), z.any()).optional(),
+  schedule: z.record(z.string(), z.any()).optional(),
+});
 
 export async function GET() {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("campaigns")
     .select("*, campaign_steps(*), sender_accounts(*)")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json(data || []);
 }
 
@@ -20,13 +30,36 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message || "Invalid campaign" },
+      { status: 400 }
+    );
+  }
+
+  const { name, status, senderIds, recipientFilter, schedule } = parsed.data;
+
   const { data, error } = await supabase
     .from("campaigns")
-    .insert({ ...body, user_id: user.id })
+    .insert({
+      user_id: user.id,
+      name,
+      status: status ?? "draft",
+      sender_ids: senderIds ?? [],
+      recipient_filter: recipientFilter ?? null,
+      schedule: schedule ?? null,
+    })
     .select()
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json(data);
+  return NextResponse.json(data, { status: 201 });
 }

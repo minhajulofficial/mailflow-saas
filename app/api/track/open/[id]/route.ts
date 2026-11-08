@@ -8,6 +8,8 @@ const trackingPixel = Buffer.from(
   "base64"
 );
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   const trackingId = request.nextUrl.pathname.split("/").pop();
   if (!trackingId) {
@@ -30,18 +32,33 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (job) {
-      await supabase.from("email_events").insert({
-        email_job_id: job.id,
-        type: "open",
-        meta: {
-          user_agent: request.headers.get("user-agent") || "",
-          ip: request.headers.get("x-forwarded-for") || "",
-        },
-      });
-      await createAuditLog((job as any).campaigns?.user_id || null, "email_opened", {
-        jobId: job.id,
-        leadEmail: (job as any).leads?.email,
-      });
+      // Only count the first open per job so privacy proxies/scanners that
+      // prefetch the pixel do not inflate stats.
+      const { data: existing } = await supabase
+        .from("email_events")
+        .select("id")
+        .eq("email_job_id", job.id)
+        .eq("type", "open")
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from("email_events").insert({
+          email_job_id: job.id,
+          type: "open",
+          meta: {
+            user_agent: request.headers.get("user-agent") || "",
+            ip: request.headers.get("x-forwarded-for") || "",
+          },
+        });
+        await createAuditLog(
+          (job as any).campaigns?.user_id || null,
+          "email_opened",
+          {
+            jobId: job.id,
+            leadEmail: (job as any).leads?.email,
+          }
+        );
+      }
     }
   } catch {
     // Swallow errors so the pixel still loads
@@ -54,5 +71,3 @@ export async function GET(request: NextRequest) {
     },
   });
 }
-
-export const dynamic = "force-dynamic";

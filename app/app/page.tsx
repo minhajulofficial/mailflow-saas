@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,14 @@ interface DashboardStats {
   openRate: number;
 }
 
+interface ActivityJob {
+  id: string;
+  status: string;
+  result_count: number | null;
+  created_at: string;
+  params?: { niche?: string; country?: string };
+}
+
 export default function DashboardPage() {
   const toast = useSonner();
   const [stats, setStats] = useState<DashboardStats>({
@@ -22,13 +31,15 @@ export default function DashboardPage() {
     openRate: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [jobs, setJobs] = useState<ActivityJob[]>([]);
 
   const fetchStats = useCallback(async () => {
     try {
-      const [leadsRes, campaignsRes, eventsRes] = await Promise.all([
+      const [leadsRes, campaignsRes, eventsRes, jobsRes] = await Promise.all([
         fetch("/api/leads?pageSize=1", { headers: { Accept: "application/json" } }),
         fetch("/api/campaigns", { headers: { Accept: "application/json" } }),
         fetch("/api/analytics", { headers: { Accept: "application/json" } }),
+        fetch("/api/extract", { headers: { Accept: "application/json" } }),
       ]);
 
       if (leadsRes.ok) {
@@ -38,18 +49,27 @@ export default function DashboardPage() {
 
       if (campaignsRes.ok) {
         const campaignsData = await campaignsRes.json();
-        setStats((prev) => ({ ...prev, campaigns: campaignsData.length || 0 }));
+        setStats((prev) => ({
+          ...prev,
+          campaigns: Array.isArray(campaignsData) ? campaignsData.length : 0,
+        }));
       }
 
       if (eventsRes.ok) {
         const events = await eventsRes.json();
-        const sent = events.filter((e: any) => e.type === "sent").length;
-        const opened = events.filter((e: any) => e.type === "open").length;
+        const list = Array.isArray(events) ? events : [];
+        const sent = list.filter((e: any) => e.type === "sent").length;
+        const opened = list.filter((e: any) => e.type === "open").length;
         setStats((prev) => ({
           ...prev,
           sentEmails: sent,
           openRate: sent > 0 ? Math.round((opened / sent) * 100) : 0,
         }));
+      }
+
+      if (jobsRes.ok) {
+        const jobsData = await jobsRes.json();
+        setJobs(Array.isArray(jobsData) ? jobsData.slice(0, 5) : []);
       }
     } catch {
       toast.error("Failed to load dashboard stats");
@@ -72,10 +92,12 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button className="bg-primary text-primary-foreground">
-            New Campaign
+          <Button asChild>
+            <Link href="/app/mail/campaigns">New Campaign</Link>
           </Button>
-          <Button variant="outline">New Extraction</Button>
+          <Button asChild variant="outline">
+            <Link href="/app/leads/extract">New Extraction</Link>
+          </Button>
         </div>
       </div>
 
@@ -123,9 +145,46 @@ export default function DashboardPage() {
                 <CardDescription>Latest lead extractions and campaigns.</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-muted-foreground text-sm text-center py-8">
-                  No recent activity yet. Start by extracting leads.
-                </div>
+                {jobs.length === 0 ? (
+                  <div className="text-muted-foreground text-sm text-center py-8">
+                    No recent activity yet. Start by extracting leads.
+                  </div>
+                ) : (
+                  <ul className="divide-y">
+                    {jobs.map((job) => (
+                      <li
+                        key={job.id}
+                        className="flex items-center justify-between gap-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">
+                            {job.params?.niche || "Extraction job"}
+                            {job.params?.country ? ` · ${job.params.country}` : ""}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(job.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs text-muted-foreground">
+                            {job.result_count ?? 0} leads
+                          </span>
+                          <Badge
+                            variant={
+                              job.status === "failed"
+                                ? "destructive"
+                                : job.status === "completed"
+                                  ? "outline"
+                                  : "secondary"
+                            }
+                          >
+                            {job.status}
+                          </Badge>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </CardContent>
             </Card>
 

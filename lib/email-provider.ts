@@ -184,7 +184,33 @@ export async function sendViaSmtp(
 }
 
 /**
- * Dispatch send to the correct provider.
+ * Dispatch a send using an explicit, already-decrypted provider secret.
+ */
+export async function dispatchEmail(
+  provider: EmailProvider,
+  secret: string,
+  input: EmailSendInput
+): Promise<SendResult> {
+  switch (provider) {
+    case "brevo":
+      return sendViaBrevo(secret, input);
+    case "mailjet": {
+      const parts = secret.split(":");
+      return sendViaMailjet(parts[0], input, parts[1]);
+    }
+    case "gmail":
+    case "smtp":
+      return sendViaSmtp(
+        { host: "", port: 587, user: "", pass: "", tls: true },
+        input
+      );
+    default:
+      return { success: false, error: `Unknown provider: ${provider}` };
+  }
+}
+
+/**
+ * Dispatch send to the correct provider (looks up the stored secret).
  */
 export async function sendEmail(
   userId: string,
@@ -217,7 +243,70 @@ export async function sendEmail(
 }
 
 /**
- * Test a provider connection.
+ * Test a provider connection with an explicit secret (used before saving).
+ */
+export async function testProviderSecret(
+  provider: EmailProvider | "apify",
+  secret: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!secret || !secret.trim()) {
+    return { ok: false, error: "Secret is empty" };
+  }
+
+  try {
+    switch (provider) {
+      case "apify": {
+        const response = await fetch("https://api.apify.com/v2/users/me", {
+          headers: { Authorization: `Bearer ${secret}` },
+        });
+        return response.ok
+          ? { ok: true }
+          : { ok: false, error: `Apify rejected the token (HTTP ${response.status})` };
+      }
+      case "brevo": {
+        const response = await fetch("https://api.brevo.com/v3/account", {
+          headers: { "api-key": secret, Accept: "application/json" },
+        });
+        return response.ok
+          ? { ok: true }
+          : { ok: false, error: `Brevo rejected the API key (HTTP ${response.status})` };
+      }
+      case "mailjet": {
+        // Mailjet needs "API key:secret key".
+        const parts = secret.split(":");
+        if (parts.length < 2 || !parts[0] || !parts[1]) {
+          return {
+            ok: false,
+            error:
+              'Mailjet needs both keys. Enter them as "apiKey:secretKey".',
+          };
+        }
+        const auth = Buffer.from(`${parts[0]}:${parts[1]}`).toString("base64");
+        const response = await fetch("https://api.mailjet.com/v3/REST/sender", {
+          headers: { Authorization: `Basic ${auth}` },
+        });
+        if (response.status === 401) {
+          return { ok: false, error: "Mailjet rejected the credentials" };
+        }
+        return { ok: true };
+      }
+      case "gmail":
+      case "smtp":
+        return {
+          ok: false,
+          error:
+            "SMTP/Gmail sending is not available in this deployment. Use Brevo or Mailjet.",
+        };
+      default:
+        return { ok: false, error: "Unknown provider" };
+    }
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Connection test failed" };
+  }
+}
+
+/**
+ * Test a provider connection using an already-saved integration.
  */
 export async function testProviderConnection(
   userId: string,
@@ -227,51 +316,7 @@ export async function testProviderConnection(
   if (!secret) {
     return { ok: false, error: `${provider} not configured` };
   }
-
-  switch (provider) {
-    case "brevo": {
-      try {
-        const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "api-key": secret,
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            sender: { name: "MailFlow Test", email: "noreply@example.com" },
-            to: [{ email: "noreply@example.com" }],
-            subject: "Connection test",
-            htmlContent: "<p>Test</p>",
-          }),
-        });
-        // 400 with valid key means auth works but validation failed
-        if (response.status === 400 || response.status === 200) {
-          return { ok: true };
-        }
-        return { ok: false, error: `Brevo auth failed: ${response.status}` };
-      } catch (err: any) {
-        return { ok: false, error: err.message };
-      }
-    }
-    case "mailjet": {
-      const parts = secret.split(":");
-      const auth = Buffer.from(`${parts[0]}:${parts[1] || ""}`).toString("base64");
-      try {
-        const response = await fetch("https://api.mailjet.com/v3/contact", {
-          headers: { Authorization: `Basic ${auth}` },
-        });
-        if (response.status === 200 || response.status === 401) {
-          return response.status === 200 ? { ok: true } : { ok: false, error: "Mailjet auth failed" };
-        }
-        return { ok: true };
-      } catch (err: any) {
-        return { ok: false, error: err.message };
-      }
-    }
-    default:
-      return { ok: false, error: "Test not supported for this provider" };
-  }
+  return testProviderSecret(provider, secret);
 }
 
 /**

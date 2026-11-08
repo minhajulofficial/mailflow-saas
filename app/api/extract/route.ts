@@ -6,22 +6,22 @@ import {
   getApifyKey,
   validateExtractionUrls,
   buildApifyInput,
-  normalizeApifyOutput,
-  runApifyActor,
-  saveLeadsForJob,
+  startApifyActor,
+  getApifyActorId,
+  syncExtractionJob,
 } from "@/lib/apify";
 
 const schema = z.object({
   sourceType: z.enum(["google-maps", "website-list", "directory", "linkedin"]),
-  niche: z.string().min(1),
-  country: z.string().min(1),
+  niche: z.string().trim().min(1, "Niche / keyword is required"),
+  country: z.string().trim().min(1, "Country is required"),
   city: z.string().optional(),
   targetDesignations: z.array(z.string()).optional(),
   companySize: z.string().optional(),
   urls: z.string().optional(),
   maxLeads: z.number().min(1).max(1000),
   requireEmail: z.boolean().optional(),
-  saveList: z.string().min(1),
+  saveList: z.string().trim().min(1),
 });
 
 export async function POST(request: Request) {
@@ -31,10 +31,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
   const result = schema.safeParse(body);
   if (!result.success) {
-    return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
+    return NextResponse.json(
+      { error: result.error.issues[0]?.message || "Invalid extraction request" },
+      { status: 400 }
+    );
   }
 
   const { saveList, ...params } = result.data;
@@ -56,7 +65,7 @@ export async function POST(request: Request) {
     .select("id")
     .eq("user_id", user.id)
     .eq("name", saveList)
-    .single();
+    .maybeSingle();
 
   if (list) {
     listId = list.id;
@@ -76,10 +85,15 @@ export async function POST(request: Request) {
   const apifyKey = await getApifyKey(user.id);
   if (!apifyKey) {
     return NextResponse.json(
-      { error: "Apify API key not configured. Add it in Settings → Integrations." },
+      {
+        error:
+          "Apify API key not configured. Add it in Settings → Integrations.",
+      },
       { status: 400 }
     );
   }
+
+  const actorId = getApifyActorId(params.sourceType);
 
   // Create extraction job
   const { data: job, error } = await supabase
@@ -87,8 +101,8 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       list_id: listId,
-      params,
-      actor: "apify/google-maps-scraper",
+      params: { ...params, __actorId: actorId },
+      actor: actorId,
       status: "queued",
       progress: 0,
     })
@@ -99,63 +113,49 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  // Run Apify actor asynchronously (fire and forget - job status updated by webhook/poll)
-  // In production this would be a background job; here we trigger inline with a timeout.
-  void (async () => {
-    try {
-      await supabase
-        .from("extraction_jobs")
-        .update({ status: "running" })
-        .eq("id", job.id);
+  // Start the Apify run and return immediately. The extract page polls this
+  // endpoint, which picks up finished runs and stores the leads. This avoids
+  // serverless function timeouts on long scraper runs.
+  try {
+    const { runId, datasetId } = await startApifyActor(
+      apifyKey,
+      actorId,
+      buildApifyInput(params)
+    );
 
-      const actorId = "apify/google-maps-scraper"; // config-driven; override via params if needed
-      const input = buildApifyInput(params);
+    await supabase
+      .from("extraction_jobs")
+      .update({
+        status: "running",
+        params: { ...params, __actorId: actorId, __runId: runId, __datasetId: datasetId },
+      })
+      .eq("id", job.id);
 
-      const rawOutput = await runApifyActor(apifyKey, actorId, input);
-      const normalized = normalizeApifyOutput(rawOutput, params.sourceType);
+    await createAuditLog(user.id, "extraction_started", {
+      jobId: job.id,
+      actorId,
+      runId,
+    });
 
-      const { inserted } = await saveLeadsForJob({
-        supabase,
-        userId: user.id,
-        jobId: job.id,
-        listId,
-        leads: normalized,
-        source: params.sourceType,
-      });
+    return NextResponse.json({ jobId: job.id, status: "running", runId });
+  } catch (err: any) {
+    const message = err?.message || "Could not start Apify extraction";
+    await supabase
+      .from("extraction_jobs")
+      .update({
+        status: "failed",
+        error: message,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", job.id);
 
-      await supabase
-        .from("extraction_jobs")
-        .update({
-          status: "completed",
-          progress: 100,
-          result_count: inserted,
-          finished_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
+    await createAuditLog(user.id, "extraction_failed", {
+      jobId: job.id,
+      error: message,
+    });
 
-      await createAuditLog(user.id, "extraction_completed", {
-        jobId: job.id,
-        inserted,
-        source: params.sourceType,
-      });
-    } catch (err: any) {
-      await supabase
-        .from("extraction_jobs")
-        .update({
-          status: "failed",
-          error: err.message || "Extraction failed",
-          finished_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
-
-      await createAuditLog(user.id, "extraction_failed", {
-        jobId: job.id,
-        error: err.message || "Extraction failed",
-      });
-    }
-  })();
-
-  return NextResponse.json({ jobId: job.id, status: job.status });
+    return NextResponse.json({ error: message, jobId: job.id }, { status: 502 });
+  }
 }
 
 export async function GET() {
@@ -165,7 +165,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data, error } = await supabase
+  const { data: jobs, error } = await supabase
     .from("extraction_jobs")
     .select("*, lead_lists(name)")
     .eq("user_id", user.id)
@@ -175,5 +175,38 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json(data || []);
+  // Pick up any runs that finished since the last poll.
+  const running = (jobs || []).filter(
+    (job) => job.status === "running" && job.params?.__runId
+  );
+
+  if (running.length > 0) {
+    const apifyKey = await getApifyKey(user.id);
+    if (apifyKey) {
+      let changed = false;
+      for (const job of running.slice(0, 10)) {
+        try {
+          const { completed } = await syncExtractionJob({
+            supabase,
+            apifyToken: apifyKey,
+            job,
+          });
+          if (completed) changed = true;
+        } catch {
+          // Leave the job running; the next poll will retry.
+        }
+      }
+
+      if (changed) {
+        const { data: refreshed } = await supabase
+          .from("extraction_jobs")
+          .select("*, lead_lists(name)")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+        return NextResponse.json(refreshed || []);
+      }
+    }
+  }
+
+  return NextResponse.json(jobs || []);
 }
