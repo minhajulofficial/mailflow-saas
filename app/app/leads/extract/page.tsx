@@ -12,6 +12,19 @@ export default function ExtractPage() {
   const toast = useSonner();
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [apifyStatus, setApifyStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/integrations", { headers: { Accept: "application/json" } })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        const connected = Array.isArray(data)
+          ? data.some((i: any) => i.provider === "apify" && i.status === "connected")
+          : false;
+        setApifyStatus(connected ? "connected" : "disconnected");
+      })
+      .catch(() => setApifyStatus(null));
+  }, []);
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -75,11 +88,21 @@ export default function ExtractPage() {
             Extract B2B leads from Google Maps, websites, and directories.
           </p>
         </div>
-        <Button asChild>
-          <a href="/app/settings/integrations">
-            Connect Apify
-          </a>
-        </Button>
+        {apifyStatus === "connected" ? (
+          <Button variant="outline" asChild>
+            <a href="/app/settings/integrations">
+              <span
+                aria-hidden="true"
+                className="inline-block h-2 w-2 rounded-full bg-emerald-500 mr-2"
+              />
+              Apify connected
+            </a>
+          </Button>
+        ) : apifyStatus === "disconnected" ? (
+          <Button asChild>
+            <a href="/app/settings/integrations">Connect Apify</a>
+          </Button>
+        ) : null}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
