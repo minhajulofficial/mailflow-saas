@@ -43,12 +43,12 @@ export default function DashboardPage() {
       ]);
 
       if (leadsRes.ok) {
-        const leadsData = await leadsRes.json();
-        setStats((prev) => ({ ...prev, leads: leadsData.total || 0 }));
+        const leadsData = await leadsRes.json().catch(() => null);
+        setStats((prev) => ({ ...prev, leads: leadsData?.total || 0 }));
       }
 
       if (campaignsRes.ok) {
-        const campaignsData = await campaignsRes.json();
+        const campaignsData = await campaignsRes.json().catch(() => null);
         setStats((prev) => ({
           ...prev,
           campaigns: Array.isArray(campaignsData) ? campaignsData.length : 0,
@@ -56,7 +56,7 @@ export default function DashboardPage() {
       }
 
       if (eventsRes.ok) {
-        const events = await eventsRes.json();
+        const events = await eventsRes.json().catch(() => null);
         const list = Array.isArray(events) ? events : [];
         const sent = list.filter((e: any) => e.type === "sent").length;
         const opened = list.filter((e: any) => e.type === "open").length;
@@ -68,7 +68,7 @@ export default function DashboardPage() {
       }
 
       if (jobsRes.ok) {
-        const jobsData = await jobsRes.json();
+        const jobsData = await jobsRes.json().catch(() => null);
         setJobs(Array.isArray(jobsData) ? jobsData.slice(0, 5) : []);
       }
     } catch {

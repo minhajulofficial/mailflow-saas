@@ -32,7 +32,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
   const result = schema.safeParse(body);
   if (!result.success) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
@@ -40,8 +45,21 @@ export async function POST(request: Request) {
 
   const { provider, secret, label } = result.data;
 
-  // Encrypt the secret server-side only
-  const encrypted = encryptSecret(secret);
+  // Encrypt the secret server-side only. A missing/malformed master key must
+  // surface as a clear JSON error instead of an empty 500 response.
+  let encrypted: { ciphertext: string; iv: string };
+  try {
+    encrypted = encryptSecret(secret);
+  } catch (err: any) {
+    return NextResponse.json(
+      {
+        error:
+          "Server encryption key is not configured. Set ENCRYPTION_MASTER_KEY (base64 32 bytes) in your deployment environment, then try again.",
+        detail: err?.message,
+      },
+      { status: 500 }
+    );
+  }
 
   // Test connection with the key the user just typed (not the stored one).
   const testResult = await testProviderSecret(provider, secret);
@@ -129,8 +147,13 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  const { id, ...updates } = body;
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const { id, ...updates } = body as Record<string, unknown>;
 
   if (!id || typeof id !== "string") {
     return NextResponse.json({ error: "Integration id is required" }, { status: 400 });
@@ -147,7 +170,19 @@ export async function PATCH(request: Request) {
   if (enabled !== undefined) updateData.enabled = enabled;
 
   if (secret) {
-    const encrypted = encryptSecret(secret);
+    let encrypted: { ciphertext: string; iv: string };
+    try {
+      encrypted = encryptSecret(secret);
+    } catch (err: any) {
+      return NextResponse.json(
+        {
+          error:
+            "Server encryption key is not configured. Set ENCRYPTION_MASTER_KEY (base64 32 bytes) in your deployment environment, then try again.",
+          detail: err?.message,
+        },
+        { status: 500 }
+      );
+    }
     updateData.encrypted_secret = encrypted.ciphertext;
     updateData.iv = encrypted.iv;
     updateData.last_tested_at = new Date().toISOString();

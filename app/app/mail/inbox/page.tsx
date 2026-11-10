@@ -23,12 +23,16 @@ export default function InboxPage() {
   }, []);
 
   async function fetchReplies() {
-    const res = await fetch("/api/replies", {
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setReplies(data || []);
+    try {
+      const res = await fetch("/api/replies", {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        setReplies(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      /* keep existing list on network failure */
     }
     setLoading(false);
   }

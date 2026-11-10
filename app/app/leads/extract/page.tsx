@@ -19,7 +19,7 @@ export default function ExtractPage() {
         headers: { Accept: "application/json" },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
         setJobs(Array.isArray(data) ? data : []);
       } else if (res.status !== 401) {
         const data = await res.json().catch(() => ({}));

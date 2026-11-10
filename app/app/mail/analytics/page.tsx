@@ -35,8 +35,8 @@ export default function AnalyticsPage() {
         fetch("/api/campaigns", { headers: { Accept: "application/json" } }),
       ]);
 
-      const events = eventsRes.ok ? await eventsRes.json() : [];
-      const list = campaignsRes.ok ? await campaignsRes.json() : [];
+      const events = eventsRes.ok ? await eventsRes.json().catch(() => []) : [];
+      const list = campaignsRes.ok ? await campaignsRes.json().catch(() => []) : [];
       const safeEvents = Array.isArray(events) ? events : [];
       const safeCampaigns = Array.isArray(list) ? list : [];
 

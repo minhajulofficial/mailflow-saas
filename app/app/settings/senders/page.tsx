@@ -58,9 +58,9 @@ export default function SendersPage() {
         fetch("/api/sender-accounts", { headers: { Accept: "application/json" } }),
         fetch("/api/integrations", { headers: { Accept: "application/json" } }),
       ]);
-      if (sRes.ok) setSenders(await sRes.json());
+      if (sRes.ok) setSenders((await sRes.json().catch(() => null)) || []);
       if (iRes.ok) {
-        const all: Integration[] = await iRes.json();
+        const all: Integration[] = (await iRes.json().catch(() => null)) || [];
         setIntegrations(all.filter((i) => ["brevo", "mailjet"].includes(i.provider)));
       }
     } catch {

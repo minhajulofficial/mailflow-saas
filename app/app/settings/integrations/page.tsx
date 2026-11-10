@@ -50,12 +50,16 @@ export default function IntegrationsPage() {
   }, []);
 
   async function fetchIntegrations() {
-    const res = await fetch("/api/integrations", {
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setIntegrations(data || []);
+    try {
+      const res = await fetch("/api/integrations", {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        setIntegrations(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      /* network error — keep the current list */
     }
     setLoading(false);
   }
@@ -69,17 +73,19 @@ export default function IntegrationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "Failed to add integration");
+        const message =
+          (data && typeof data.error === "string" && data.error) ||
+          (res.status === 500 ? "Server error while saving the integration" : "Failed to add integration");
+        throw new Error(message);
       }
-      const data = await res.json();
-      if (data.testError) {
+      if (data?.testError) {
         toast.warning(
           `${data.provider} saved, but the connection test failed: ${data.testError}`
         );
       } else {
-        toast.success(`${data.provider} connected`);
+        toast.success(`${data?.provider || form.provider} connected`);
       }
       setForm({ provider: "apify", secret: "", label: "" });
       fetchIntegrations();

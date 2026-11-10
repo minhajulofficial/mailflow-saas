@@ -78,12 +78,17 @@ export default function CampaignDetailPage() {
       return;
     }
 
-    const detail = await cRes.json();
+    const detail = await cRes.json().catch(() => null);
+    if (!detail || typeof detail !== "object") {
+      toast.error("Could not load campaign");
+      setLoading(false);
+      return;
+    }
     setCampaign(detail);
 
-    if (tRes.ok) setTemplates(await tRes.json());
-    if (sRes.ok) setSenders(await sRes.json());
-    if (lRes.ok) setLists(await lRes.json());
+    if (tRes.ok) setTemplates((await tRes.json().catch(() => null)) || []);
+    if (sRes.ok) setSenders((await sRes.json().catch(() => null)) || []);
+    if (lRes.ok) setLists((await lRes.json().catch(() => null)) || []);
 
     const stepTemplate = detail?.steps?.[0]?.template_id;
     const firstSender = detail?.sender_ids?.[0];
