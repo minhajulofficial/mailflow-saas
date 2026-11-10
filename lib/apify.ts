@@ -47,33 +47,57 @@ export function validateExtractionUrls(urls: string[]): { ok: boolean; error?: s
 
 /**
  * Build Apify actor input based on extraction params.
+ *
+ * Field names below match the actors' published input schemas:
+ *  - compass/crawler-google-places: searchStringsArray, locationQuery,
+ *    maxCrawledPlacesPerSearch, scrapeContacts, skipClosedPlaces
+ *  - apify/website-content-crawler: startUrls, maxCrawlDepth, maxCrawlPages
+ * Unknown fields are silently ignored by Apify, so using the wrong name makes
+ * a run start and then fail with "INVALID INPUT" instead of erroring early.
  */
 export function buildApifyInput(params: any): any {
-  const { sourceType, niche, country, city, urls, maxLeads, targetDesignations, requireEmail } = params;
+  const { sourceType, niche, country, city, urls, maxLeads, requireEmail } = params;
+  const limit = Math.min(Math.max(Number(maxLeads) || 50, 1), 1000);
 
   switch (sourceType) {
-    case "google-maps":
-      return {
-        searchStrings: [`${niche} ${city ? city + ", " : ""}${country}`].filter(Boolean),
-        maxLocations: Math.min(maxLeads || 50, 500),
+    case "google-maps": {
+      // Keep the search term clean and pass the area via locationQuery:
+      // embedding the location in the search string caps results at 120.
+      const location = [city, country].filter(Boolean).join(", ");
+      const input: any = {
+        searchStringsArray: [niche].filter(Boolean),
+        maxCrawledPlacesPerSearch: limit,
         language: "en",
-        includeWebResults: true,
+        skipClosedPlaces: true,
+        // Pull business emails/socials from each place's website — this is
+        // what makes the extracted leads usable for cold email.
+        scrapeContacts: true,
       };
+      if (location) input.locationQuery = location;
+      return input;
+    }
     case "website-list":
+    case "directory": {
+      const startUrls = (urls || "")
+        .split(/\r?\n/)
+        .map((u: string) => u.trim())
+        .filter(Boolean)
+        .map((url: string) => ({ url }));
       return {
-        startUrls: (urls || "").split("\n").map((u: string) => ({ url: u.trim() })).filter(Boolean),
-        maxDepth: 1,
-        maxPages: Math.min(maxLeads || 50, 500),
+        startUrls,
+        // Listings need one extra hop to reach detail pages.
+        maxCrawlDepth: sourceType === "directory" ? 2 : 1,
+        maxCrawlPages: limit,
+        crawlerType: "playwright:adaptive",
       };
-    case "directory":
-      return {
-        startUrls: (urls || "").split("\n").map((u: string) => ({ url: u.trim() })).filter(Boolean),
-        maxPages: Math.min(maxLeads || 50, 500),
-      };
+    }
     case "linkedin":
+      // The LinkedIn option is disabled in the UI; keep a valid payload in
+      // case the API is called directly.
       return {
-        searchQueries: [`${niche} ${country} site:linkedin.com/in`],
-        maxProfiles: Math.min(maxLeads || 50, 500),
+        searchStringsArray: [`${niche} ${country}`].filter(Boolean),
+        maxCrawledPlacesPerSearch: limit,
+        language: "en",
       };
     default:
       return {};
@@ -82,40 +106,134 @@ export function buildApifyInput(params: any): any {
 
 /**
  * Normalize Apify actor output into MailFlow lead format.
+ *
+ * Handles two shapes:
+ *  - compass/crawler-google-places items (business-centric: title, website,
+ *    phone, address, categoryName, countryCode) plus their optional
+ *    `leadsEnrichment` / `impressum` person records.
+ *  - apify/website-content-crawler items (page-centric: url, metadata.title).
  */
 export function normalizeApifyOutput(rawOutput: any[], source: string): any[] {
   const seen = new Set<string>();
   const leads: any[] = [];
 
+  const add = (lead: any) => {
+    const email = String(lead.email || "").toLowerCase().trim() || null;
+    const site = String(lead.website || lead.url || "").toLowerCase().trim();
+    const name = String(lead.person_name || "").toLowerCase().trim();
+    // Matching rules:
+    //  - same email        -> same lead
+    //  - same site, no person name -> same business
+    //  - same site WITH person names -> different people at one company (keep both)
+    const keys: string[] = [];
+    if (email) keys.push(email);
+    if (site) keys.push(name ? `${site}|${name}` : site);
+    else if (name) keys.push(`name:${name}`);
+    if (!keys.length) return;
+    if (keys.some((k) => seen.has(k))) return;
+    for (const k of keys) seen.add(k);
+    leads.push({ ...lead, email });
+  };
+
   for (const item of rawOutput || []) {
-    const email = (item.email || item.contactEmail || "").toLowerCase().trim();
-    const dedupeKey = email || (item.website || item.url || "").toLowerCase();
+    const company =
+      item.company || item.businessName || item.title || item.metadata?.title || null;
+    const website = item.website || item.homepage || item.url || null;
 
-    if (!dedupeKey || seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+    // Person records from the "business leads" add-on (paid) — one row each.
+    const enrichment: any[] = Array.isArray(item.leadsEnrichment)
+      ? item.leadsEnrichment
+      : [];
 
-    leads.push({
-      person_name: item.person_name || item.name || item.contactName || null,
-      designation: item.designation || item.title || item.role || null,
-      company: item.company || item.businessName || item.title || null,
-      website: item.website || item.homepage || item.url || null,
-      email: email || null,
-      phone: item.phone || item.contactPhone || null,
-      facebook: item.socialProfiles?.facebook || item.facebook || null,
-      instagram: item.socialProfiles?.instagram || item.instagram || null,
-      linkedin: item.socialProfiles?.linkedin || item.linkedin || null,
-      youtube: item.socialProfiles?.youtube || item.youtube || null,
-      x_url: item.socialProfiles?.x || item.twitter || item.x_url || null,
-      tiktok: item.socialProfiles?.tiktok || item.tiktok || null,
-      country: item.country || null,
+    // Impressum (DE/AT/CH legal notice) contacts.
+    const impressum: any = item.impressum || null;
+    const impressumEmails: string[] = Array.isArray(impressum?.emails)
+      ? impressum.emails.map((e: any) => e?.value).filter(Boolean)
+      : [];
+    const impressumPeople: any[] = Array.isArray(impressum?.people)
+      ? impressum.people
+      : [];
+
+    const base = {
+      company,
+      website,
+      phone: item.phone || item.phoneUnformatted || null,
+      country: item.country || item.countryCode || null,
       state: item.state || item.region || null,
       city: item.city || null,
       address: item.address || item.fullAddress || null,
-      niche: item.niche || item.category || null,
+      niche: item.niche || item.category || item.categoryName || null,
+      facebook: item.socialProfiles?.facebook || item.facebook || item.facebooks?.[0] || null,
+      instagram: item.socialProfiles?.instagram || item.instagram || item.instagrams?.[0] || null,
+      linkedin: item.socialProfiles?.linkedin || item.linkedin || item.linkedIns?.[0] || null,
+      youtube: item.socialProfiles?.youtube || item.youtube || item.youtubes?.[0] || null,
+      x_url: item.socialProfiles?.x || item.twitter || item.x_url || item.twitters?.[0] || null,
+      tiktok: item.socialProfiles?.tiktok || item.tiktok || item.tiktoks?.[0] || null,
       source,
       tags: item.tags || [],
-      email_status: email ? "unverified" : "invalid",
       status: "new",
+    };
+
+    const rating = item.totalScore ?? null;
+    const reviews = item.reviewsCount ?? null;
+    const tags = [
+      ...(base.tags || []),
+      ...(rating != null ? [`rating:${rating}`] : []),
+      ...(reviews != null ? [`reviews:${reviews}`] : []),
+    ];
+
+    if (enrichment.length) {
+      // Each enriched person becomes their own lead (they carry the emails).
+      for (const person of enrichment) {
+        add({
+          ...base,
+          tags,
+          person_name: person.fullName ||
+            [person.firstName, person.lastName].filter(Boolean).join(" ") ||
+            null,
+          designation: person.jobTitle || person.headline || null,
+          company: person.companyName || company,
+          website: person.companyWebsite
+            ? `https://${String(person.companyWebsite).replace(/^https?:\/\//, "")}`
+            : website,
+          email: person.email || null,
+          phone: person.mobileNumber || base.phone,
+          linkedin: person.linkedinProfile || base.linkedin,
+          country: person.country || base.country,
+          city: person.city || base.city,
+          state: person.state || base.state,
+          email_status: person.email ? "unverified" : "invalid",
+        });
+      }
+      continue;
+    }
+
+    if (impressumPeople.length) {
+      for (const person of impressumPeople) {
+        add({
+          ...base,
+          tags,
+          person_name: person.name || null,
+          designation: person.role || null,
+          email: impressumEmails[0] || null,
+          email_status: impressumEmails[0] ? "unverified" : "invalid",
+        });
+      }
+      continue;
+    }
+
+    // Plain place/page record.
+    const email =
+      item.email || item.contactEmail || impressumEmails[0] ||
+      (Array.isArray(item.emails) ? item.emails[0] : null) || null;
+
+    add({
+      ...base,
+      tags,
+      person_name: item.person_name || item.contactName || null,
+      designation: item.designation || item.role || null,
+      email,
+      email_status: email ? "unverified" : "invalid",
     });
   }
 
