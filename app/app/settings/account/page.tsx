@@ -25,7 +25,7 @@ export default function AccountPage() {
   const [deleting, setDeleting] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [form, setForm] = useState({ name: "", sender_address: "", timezone: "UTC" });
-  const [password, setPassword] = useState({ next: "", confirm: "" });
+  const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +75,10 @@ export default function AccountPage() {
 
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
+    if (!password.current.trim()) {
+      toast.error("Enter your current password");
+      return;
+    }
     if (password.next.length < 8) {
       toast.error("Password must be at least 8 characters");
       return;
@@ -88,13 +92,13 @@ export default function AccountPage() {
       const res = await fetch("/api/auth/change-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: password.next }),
+        body: JSON.stringify({ password: password.next, currentPassword: password.current }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(typeof data?.error === "string" ? data.error : "Could not update password");
       }
-      setPassword({ next: "", confirm: "" });
+      setPassword({ current: "", next: "", confirm: "" });
       toast.success("Password updated");
     } catch (err: any) {
       toast.error(err?.message || "Could not update password");
@@ -209,10 +213,20 @@ export default function AccountPage() {
       <Card>
         <CardHeader>
           <CardTitle>Change password</CardTitle>
-          <CardDescription>Use at least 8 characters.</CardDescription>
+          <CardDescription>Confirm your current password, then choose a new one with at least 8 characters.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={changePassword} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="current-password">Current password</Label>
+              <Input
+                id="current-password"
+                type="password"
+                autoComplete="current-password"
+                value={password.current}
+                onChange={(e) => setPassword({ ...password, current: e.target.value })}
+              />
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <Label htmlFor="new-password">New password</Label>
