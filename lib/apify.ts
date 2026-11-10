@@ -492,12 +492,17 @@ export async function syncExtractionJob({
       raw,
       job?.params?.sourceType || "google-maps"
     );
+    // "Require email" means: only import leads we can actually contact.
+    const requireEmail = Boolean(job?.params?.requireEmail);
+    const importable = requireEmail
+      ? normalized.filter((l) => Boolean(l.email))
+      : normalized;
     const { inserted } = await saveLeadsForJob({
       supabase,
       userId: job.user_id,
       jobId: job.id,
       listId: job.list_id ?? null,
-      leads: normalized,
+      leads: importable,
       source: job?.params?.sourceType || "google-maps",
     });
 
