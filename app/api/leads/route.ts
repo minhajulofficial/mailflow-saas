@@ -14,13 +14,23 @@ const querySchema = z.object({
 
 const createSchema = z.object({
   person_name: z.string().trim().max(200).optional(),
+  designation: z.string().trim().max(200).optional(),
   company: z.string().trim().max(200).optional(),
   email: z.string().trim().toLowerCase().email("Enter a valid email"),
   phone: z.string().trim().max(60).optional(),
   website: z.string().trim().max(300).optional(),
   country: z.string().trim().max(120).optional(),
+  state: z.string().trim().max(120).optional(),
   city: z.string().trim().max(120).optional(),
+  address: z.string().trim().max(400).optional(),
   niche: z.string().trim().max(120).optional(),
+  facebook: z.string().trim().max(300).optional(),
+  instagram: z.string().trim().max(300).optional(),
+  linkedin: z.string().trim().max(300).optional(),
+  youtube: z.string().trim().max(300).optional(),
+  x_url: z.string().trim().max(300).optional(),
+  tiktok: z.string().trim().max(300).optional(),
+  tags: z.array(z.string().max(60)).max(20).optional(),
   list_id: z.string().uuid().nullable().optional(),
 });
 
