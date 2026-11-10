@@ -14,8 +14,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="border-b border-border px-6 pt-6">
+    <div className="flex min-h-full flex-col">
+      <div className="sticky top-0 z-10 border-b border-border bg-background px-6 pt-6">
         <h1 className="text-2xl font-bold mb-4">Settings</h1>
         <nav className="flex gap-1" aria-label="Settings sections">
           {TABS.map((tab) => {
@@ -37,7 +37,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
           })}
         </nav>
       </div>
-      <div className="flex-1 overflow-y-auto">{children}</div>
+      <div className="flex-1">{children}</div>
     </div>
   );
 }
