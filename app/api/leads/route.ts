@@ -120,6 +120,7 @@ export async function POST(request: Request) {
     .from("leads")
     .insert({
       ...data,
+      user_id: user.id,
       list_id: data.list_id ?? null,
       source: "manual",
       status: "new",
