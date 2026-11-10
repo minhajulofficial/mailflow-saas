@@ -105,6 +105,22 @@ export function buildApifyInput(params: any): any {
 }
 
 /**
+ * Extract city/state from a US-style address tail: "…, Miami, FL 33125".
+ * Compass occasionally omits city/state/countryCode even when the address
+ * contains them, so recover them instead of storing nulls.
+ */
+function parseCityState(address: string): { city: string | null; state: string | null } {
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 3) return { city: null, state: null };
+  const last = parts[parts.length - 1];
+  const zipMatch = last.match(/^([A-Za-z]{2})\s+\d{5}(?:-\d{4})?$/);
+  if (zipMatch) return { city: parts[parts.length - 2], state: zipMatch[1].toUpperCase() };
+  const stateOnly = last.match(/^([A-Za-z]{2})$/);
+  if (stateOnly) return { city: parts[parts.length - 2], state: stateOnly[1].toUpperCase() };
+  return { city: null, state: null };
+}
+
+/**
  * Normalize Apify actor output into MailFlow lead format.
  *
  * Handles two shapes:
@@ -129,6 +145,10 @@ export function normalizeApifyOutput(rawOutput: any[], source: string): any[] {
     if (email) keys.push(email);
     if (site) keys.push(name ? `${site}|${name}` : site);
     else if (name) keys.push(`name:${name}`);
+    // Google Maps rows often arrive without website/email — keep them and
+    // dedupe on company (+ person) instead of dropping the lead.
+    const company = String(lead.company || "").toLowerCase().trim();
+    if (company) keys.push(`co:${company}|${name}`);
     if (!keys.length) return;
     if (keys.some((k) => seen.has(k))) return;
     for (const k of keys) seen.add(k);
@@ -138,7 +158,12 @@ export function normalizeApifyOutput(rawOutput: any[], source: string): any[] {
   for (const item of rawOutput || []) {
     const company =
       item.company || item.businessName || item.title || item.metadata?.title || null;
-    const website = item.website || item.homepage || item.url || null;
+    // For Google Maps items `url` is always the maps listing link, never the
+    // business website — only website-crawler pages may use the page URL.
+    const website =
+      item.website ||
+      item.homepage ||
+      (source === "google-maps" ? null : item.url || null);
 
     // Person records from the "business leads" add-on (paid) — one row each.
     const enrichment: any[] = Array.isArray(item.leadsEnrichment)
@@ -154,14 +179,18 @@ export function normalizeApifyOutput(rawOutput: any[], source: string): any[] {
       ? impressum.people
       : [];
 
+    // Compass sometimes leaves city/state/countryCode empty — recover the
+    // common US-style tail from the address: "…, Miami, FL 33125".
+    const address = item.address || item.fullAddress || null;
+    const parsed = address ? parseCityState(address) : null;
     const base = {
       company,
       website,
       phone: item.phone || item.phoneUnformatted || null,
       country: item.country || item.countryCode || null,
-      state: item.state || item.region || null,
-      city: item.city || null,
-      address: item.address || item.fullAddress || null,
+      state: item.state || item.region || parsed?.state || null,
+      city: item.city || parsed?.city || null,
+      address,
       niche: item.niche || item.category || item.categoryName || null,
       facebook: item.socialProfiles?.facebook || item.facebook || item.facebooks?.[0] || null,
       instagram: item.socialProfiles?.instagram || item.instagram || item.instagrams?.[0] || null,
@@ -494,9 +523,14 @@ export async function syncExtractionJob({
     );
     // "Require email" means: only import leads we can actually contact.
     const requireEmail = Boolean(job?.params?.requireEmail);
-    const importable = requireEmail
-      ? normalized.filter((l) => Boolean(l.email))
-      : normalized;
+    const scoped = normalized.map((l) => ({
+      ...l,
+      // The search always targeted one market — keep it on rows where the
+      // actor left the location blank.
+      city: l.city || job?.params?.city || null,
+      country: l.country || job?.params?.country || null,
+    }));
+    const importable = requireEmail ? scoped.filter((l) => Boolean(l.email)) : scoped;
     const { inserted } = await saveLeadsForJob({
       supabase,
       userId: job.user_id,

@@ -163,13 +163,42 @@ describe("normalizeApifyOutput", () => {
         { title: "A", email: "Info@Example.com", website: "https://a.com" },
         { title: "A again", email: "info@example.com" },
         { title: "B", website: "https://a.com" },
-        { title: "No key at all" },
+        // Company-only rows survive (valid phone/address lead) but identical
+        // ones collapse into one regardless of partial field differences.
+        { title: "Solo Co" },
+        { title: "Solo Co", address: "1 Main St, Miami, FL 33125" },
+        { title: "Solo Co" },
       ],
       "google-maps"
     );
 
-    expect(leads).toHaveLength(1);
+    expect(leads).toHaveLength(2);
     expect(leads[0].email).toBe("info@example.com");
+    expect(leads.map((l) => l.company)).toEqual(["A", "Solo Co"]);
+  });
+
+  it("never stores the Google Maps listing URL as the website", () => {
+    const leads = normalizeApifyOutput(
+      [
+        {
+          title: "No Site Co",
+          address: "1420 Northwest North River Drive STE 170, Miami, FL 33125",
+          url: "https://www.google.com/maps/search/?api=1&query=No%20Site%20Co",
+        },
+        {
+          title: "Has Site Co",
+          website: "https://hassite.example",
+          url: "https://www.google.com/maps/search/?api=1&query=Has%20Site%20Co",
+        },
+      ],
+      "google-maps"
+    );
+
+    expect(leads[0].website).toBeNull();
+    // City/state recovered from the address tail when the actor omits them.
+    expect(leads[0].city).toBe("Miami");
+    expect(leads[0].state).toBe("FL");
+    expect(leads[1].website).toBe("https://hassite.example");
   });
 
   it("maps website-crawler page metadata to company names", () => {
