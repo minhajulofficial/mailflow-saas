@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -10,17 +10,51 @@ export interface EncryptedSecret {
   iv: string;
 }
 
+let warnedFallback = false;
+
+function parseMasterKey(encodedKey: string): Buffer | null {
+  try {
+    const key = Buffer.from(encodedKey, "base64");
+    if (key.length !== KEY_BYTES || key.toString("base64") !== encodedKey) {
+      return null;
+    }
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Deterministic fallback key derived from the service-role key. Used only when
+ * ENCRYPTION_MASTER_KEY is unset or still a placeholder, so secret storage
+ * keeps working out of the box instead of failing every write with a 500.
+ * The derivation is stable, so previously stored values still decrypt.
+ */
+function deriveFallbackKey(serviceRoleKey: string): Buffer {
+  return createHmac("sha256", serviceRoleKey)
+    .update("mailflow:encryption-key:v1")
+    .digest();
+}
+
 function getMasterKey(): Buffer {
   const encodedKey = process.env.ENCRYPTION_MASTER_KEY;
-  if (!encodedKey) {
-    throw new Error("ENCRYPTION_MASTER_KEY environment variable is required");
+  const parsed = encodedKey ? parseMasterKey(encodedKey) : null;
+  if (parsed) return parsed;
+
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceRoleKey && serviceRoleKey.length >= 16) {
+    if (!warnedFallback) {
+      warnedFallback = true;
+      console.warn(
+        "[encryption] ENCRYPTION_MASTER_KEY is missing or invalid; deriving the storage key from SUPABASE_SERVICE_ROLE_KEY. Set a real base64 32-byte ENCRYPTION_MASTER_KEY to use a dedicated key."
+      );
+    }
+    return deriveFallbackKey(serviceRoleKey);
   }
 
-  const key = Buffer.from(encodedKey, "base64");
-  if (key.length !== KEY_BYTES || key.toString("base64") !== encodedKey) {
-    throw new Error("ENCRYPTION_MASTER_KEY must be a canonical base64-encoded 32-byte key");
-  }
-  return key;
+  throw new Error(
+    "No encryption key available: set ENCRYPTION_MASTER_KEY (canonical base64, 32 bytes) or SUPABASE_SERVICE_ROLE_KEY"
+  );
 }
 
 export function encryptSecret(plaintext: string): EncryptedSecret {

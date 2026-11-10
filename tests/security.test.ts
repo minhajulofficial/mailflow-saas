@@ -23,6 +23,29 @@ describe("secret encryption", () => {
 
     expect(() => decryptSecret(tampered)).toThrow();
   });
+
+  it("falls back to a stable derived key when the master key is a placeholder", () => {
+    const original = process.env.ENCRYPTION_MASTER_KEY;
+    const originalService = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    // Simulate the deployment state: placeholder value + a working service key.
+    process.env.ENCRYPTION_MASTER_KEY = "your_32_byte_base64_encryption_key";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key-for-derivation";
+
+    try {
+      const first = encryptSecret("apify-token");
+      const second = encryptSecret("apify-token");
+
+      // Fresh IV each time, but both decrypt with the same derived key.
+      expect(first.iv).not.toBe(second.iv);
+      expect(decryptSecret(first)).toBe("apify-token");
+      expect(decryptSecret(second)).toBe("apify-token");
+    } finally {
+      if (original === undefined) delete process.env.ENCRYPTION_MASTER_KEY;
+      else process.env.ENCRYPTION_MASTER_KEY = original;
+      if (originalService === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.SUPABASE_SERVICE_ROLE_KEY = originalService;
+    }
+  });
 });
 
 describe("user-supplied URL screening", () => {
